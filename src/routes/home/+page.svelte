@@ -11,8 +11,8 @@ import { _ } from 'svelte-i18n';
   let imageHeight = 90; // px
 
   let showModal = false;
-  let fileNames = [];
-  let fileError = '';
+  let selectedDirectory = '';
+  let directoryError = '';
   let loading = false;
   let showImageModal = false;
   let selectedTable = null;
@@ -132,148 +132,63 @@ import { _ } from 'svelte-i18n';
     showImageModal = false;
     selectedTable = null;
   }
-  let isDragOver = false;
+
 
   function openModal() {
     showModal = true;
-    fileNames = [];
-    fileError = '';
+    selectedDirectory = '';
+    directoryError = '';
   }
 
-  async function selectAndImportFiles() {
+  async function selectAndImportDirectory() {
     if (isTauri) {
-      toastMsg = `Apertura dialogo file...`;
+      toastMsg = `Apertura dialogo directory...`;
       toastType = 'success';
       showToast = true;
       const selected = await open({
-        multiple: true,
-        filters: [{ name: 'CHT', extensions: ['cht'] }]
+        directory: true,
+        multiple: false
       });
-      toastMsg = `Selected ${selected}`;
-      toastType = 'success';
-      showToast = true;
-      setTimeout(() => { showToast = false; }, 2500);
       if (selected) {
-        const files = Array.isArray(selected) ? selected : [selected];
-        fileNames = files.map(f => f.split(/[\\/]/).pop());
-        fileError = '';
+        selectedDirectory = selected.split(/[\\/]/).pop(); // Solo il nome della directory per la UI
+        directoryError = '';
         loading = true;
-        toastMsg = 'Importazione in corso...';
-        toastType = 'error';
+        toastMsg = 'Aggiunta progetto in corso...';
+        toastType = 'success';
         showToast = true;
         setTimeout(() => { showToast = false; }, 2500);
-        for (const filePath of files) {
-          try {
-            const res = await invoke('import_cht', { filePath: filePath });
-            toastMsg = res;
-            toastType = 'success';
-            // Refresh the home tables list so the newly imported table appears
-            await loadTables();
-          } catch (err) {
-            toastMsg = typeof err === 'string' ? err : $_('home.import_error_generic');
-            toastType = 'error';
-          }
-          showToast = true;
-          setTimeout(() => { showToast = false; }, 2500);
-        }
-        loading = false;
-      }
-    } else {
-      // Fallback: usa input HTML (solo per interfaccia, non importa)
-      toastMsg = $_('home.web_mode_error');
-      toastType = 'error';
-      showToast = true;
-      setTimeout(() => { showToast = false; }, 2500);
-    }
-  }
-
-  // Funzione per input HTML (solo interfaccia dimostrativa)
-  function triggerFileInput() {
-    const input = document.getElementById('file-input');
-    if (input) input.click();
-  }
-
-  // Gestisce la selezione da input HTML (solo per demo)
-  function handleHtmlFileSelect(event) {
-    const files = Array.from(event.target.files);
-      fileNames = files.map(f => f.name);
-      fileError = 'Nota: il dialog HTML non fornisce percorsi completi. Usa Tauri per importare realmente.';
-      toastMsg = $_('home.files_selected');
-      toastType = 'error';
-      showToast = true;
-      setTimeout(() => { showToast = false; }, 3000);
-  }
-  function closeModal() {
-    showModal = false;
-    fileNames = [];
-    fileError = '';
-  }
-  function handleFileChange(event) {
-    const files = Array.from(event.target.files);
-    processFiles(files);
-  }
-
-  function handleDrop(event) {
-    event.preventDefault();
-    isDragOver = false;
-    const files = Array.from(event.dataTransfer.files);
-    processFiles(files);
-  }
-
-  function handleDragOver(event) {
-    event.preventDefault();
-    isDragOver = true;
-  }
-
-  function handleDragLeave(event) {
-    event.preventDefault();
-    isDragOver = false;
-  }
-
-  async function processFiles(files) {
-    if (!files.length) return;
-    const invalid = files.filter(f => !f.name.endsWith('.cht'));
-    if (invalid.length) {
-      fileError = $_('home.invalid_files');
-      fileNames = [];
-      return;
-    }
-    fileNames = files.map(f => f.name);
-    fileError = '';
-    // Carica ogni file .cht nel backend Tauri
-    loading = true;
-    for (const file of files) {
-      // Ottieni il percorso assoluto del file (solo se selezionato da dialog, non drag&drop da fuori app)
-      // In Tauri, file.path è disponibile solo se usi l'API open dialog, altrimenti serve workaround
-      // Qui usiamo file.path se disponibile, altrimenti file.name
-      let filePath = file.path || file.name;
-      // Se file.path non esiste, non puoi importare realmente il file
-      // In produzione, usa l'API Tauri open dialog per ottenere il path
-      // Per test, puoi passare file.name se il file è nella directory del progetto
-      // eslint-disable-next-line no-undef
-      const { invoke } = window.__TAURI__ ? window.__TAURI__.tauri : {};
-      if (invoke && filePath) {
+        
         try {
-          const res = await invoke('import_cht', { filePath: filePath });
+          const res = await invoke('import_project_directory', { directoryPath: selected });
           toastMsg = res;
           toastType = 'success';
-            // Refresh the home tables list after successful import
-            await loadTables();
+          // Refresh the home tables list so the newly imported table appears
+          await loadTables();
+          showModal = false; // Chiudi il modal dopo il successo
         } catch (err) {
-          toastMsg = typeof err === 'string' ? err : $_('home.import_error');
+          toastMsg = typeof err === 'string' ? err : $_('home.error_adding_project');
           toastType = 'error';
         }
         showToast = true;
         setTimeout(() => { showToast = false; }, 2500);
-      } else {
-        toastMsg = $_('home.path_error');
-        toastType = 'error';
-        showToast = true;
-        setTimeout(() => { showToast = false; }, 2500);
+        loading = false;
       }
+    } else {
+      // Fallback: web mode non supporta selezione directory
+      toastMsg = $_('home.web_note');
+      toastType = 'error';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 2500);
     }
-    loading = false;
   }
+
+
+  function closeModal() {
+    showModal = false;
+    selectedDirectory = '';
+    directoryError = '';
+  }
+
 </script>
 
 <div class="min-h-screen flex flex-col" style="background: linear-gradient(135deg, #c9ffe7 0%, #e9e9ff 70%, #dcecff 100%);">
@@ -297,7 +212,7 @@ import { _ } from 'svelte-i18n';
       <div class="flex items-center gap-2 justify-end">
         <button class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2" on:click={() => { showModal = true; }}>
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h1m-6 0a7 7 0 01-14 0 7 7 0 0114 0z"></path>
           </svg>
           {$_('home.add')}
         </button>
@@ -308,33 +223,13 @@ import { _ } from 'svelte-i18n';
   <!-- IMPORT FILE MODAL -->
   {#if showModal}
     <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div
-        class="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm relative"
-        role="region"
-        aria-label="File upload area"
-        on:drop={handleDrop}
-        on:dragover={handleDragOver}
-        on:dragleave={handleDragLeave}
-        style="outline: {isDragOver ? '2px solid #22c55e' : 'none'}; outline-offset: 0;"
-      >
+      <div class="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm relative">
         <h2 class="text-lg font-semibold mb-4">{$_('home.upload_title')}</h2>
         <div class="mb-4 flex flex-col items-center justify-center">
-          <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-2" on:click={selectAndImportFiles} disabled={loading}>
-            {$_('home.select_files')}
+          <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-2" on:click={selectAndImportDirectory} disabled={loading}>
+            {$_('home.select_directory')}
           </button>
-          {#if !isTauri}
-            <button class="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded mb-2" on:click={triggerFileInput}>
-              {$_('home.choose_files')}
-            </button>
-            <input
-              id="file-input"
-              type="file"
-              multiple
-              accept=".cht"
-              class="hidden"
-              on:change={handleHtmlFileSelect}
-            />
-          {/if}
+
           {#if loading}
             <div class="mt-2 text-blue-600 font-semibold">{$_('home.loading')}</div>
           {/if}
@@ -346,18 +241,13 @@ import { _ } from 'svelte-i18n';
             {/if}
           </div>
         </div>
-        {#if fileNames.length}
+        {#if selectedDirectory}
           <div class="text-green-600 mb-2">
-            {$_('home.selected_files')}
-            <ul class="list-disc ml-4">
-              {#each fileNames as name}
-                <li>{name}</li>
-              {/each}
-            </ul>
+            {$_('home.selected_directory')} <strong>{selectedDirectory}</strong>
           </div>
         {/if}
-        {#if fileError}
-          <div class="text-red-600 mb-2">{fileError}</div>
+        {#if directoryError}
+          <div class="text-red-600 mb-2">{directoryError}</div>
         {/if}
         <div class="flex justify-end gap-3 mt-4">
           <button class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded flex items-center gap-2" on:click={closeModal}>
@@ -367,11 +257,7 @@ import { _ } from 'svelte-i18n';
             {$_('home.close')}
           </button>
         </div>
-        {#if isDragOver}
-          <div class="absolute inset-0 bg-green-200/40 pointer-events-none rounded-lg flex items-center justify-center text-green-700 text-lg font-bold">
-            {$_('home.drop_here')}
-          </div>
-        {/if}
+
       </div>
     </div>
   {/if}

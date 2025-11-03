@@ -13,7 +13,7 @@ vite.config.ts.timestamp-*
 /src-tauri/target
 /src-tauri/gen
 
-data/cheats.db
+data/projects.db
 
 data/temp_logo_Frue_Lufia__v6_0_.png
 
