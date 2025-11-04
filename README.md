@@ -1,62 +1,89 @@
-# SilCheat - Cheat Code Manager
+# HMITranslator - Translation Manager for HMI Projects
 
 ![alt text](image/home.png)
 
-SilCheat is a desktop application to manage and organize cheat codes for your favorite games. It lets you import, edit and reorder cheats in a simple and intuitive way.
+HMITranslator is a desktop application designed to manage and translate text strings in HMI (Human Machine Interface) projects. It supports both Premium HMI and Movicon project formats, providing an intuitive interface for managing multilingual translations.
 
 ## Main Features
 
-- **CHT File Import**: Easily load `.cht` files that contain cheat codes to populate your tables.
+- **Project Import**: Load Premium HMI (`.hmiprj`) and Movicon (`.movprj`) project files to automatically detect translatable strings.
 ![alt text](image/add_new_cht_1.png)
 ![alt text](image/add_new_cht_2.png)
 
-- **Table Management**: Create and organize separate tables for each game to keep everything tidy.
+- **Translation Management**: Organize translations in dedicated tables for each project, supporting multiple languages.
 ![alt text](image/cht_view.png)
 
-- **Move Cheats**: Select and change the position of a cheat.
-![alt text](image/select_and_move.png)
+- **Record Organization**: Sort and reorder translation records to maintain project structure.
+![alt text](image/select_and_move_cht.png)
 ![alt text](image/moved_cheat.png)
 
-- **View and Edit**: See details for each cheat, edit them or add new ones.
+- **Translation Editor**: View and edit translation records with dedicated forms for each language.
 ![alt text](image/cheat_view.png)
 
-- **Single and Bulk Add**: Add a single cheat or use "Magic add" to paste multiple cheats as free text.
+- **Batch Operations**: Add single translations or use bulk import features for efficient workflow.
 ![alt text](image/create_one_new_cheat.png)
 ![alt text](image/magic_add_cheat.png)
 ![alt text](image/cheat_added_with_magic_cheat.png)
 
-- **Export**: Save your tables as `.cht` files to share or use elsewhere.
+- **Export Functionality**: Export completed translations back to project files or generate language-specific files.
 ![alt text](image/export_cht.png)
 
-- **Logo Download**: Download logo/boxart from external services (RAWG / TheGamesDB) and set them as the table image.
+- **AI Translation Integration**: Connect with external translation services (DeepL, Google Translate, Microsoft Translator) for automated translations.
 ![alt text](image/add_image.png)
 
-- **Localization (i18n)**: UI texts available in Italian and English (`src/lib/i18n/{it.json,en.json}`); the backend returns i18n keys that are translated by the UI.
+- **Multilingual Interface**: Full internationalization support with Italian and English UI (`src/lib/i18n/{it.json,en.json}`).
 ![alt text](image/setting_page.png)
 
 ---
 
+## System Requirements
+
+- **Supported HMI Systems**: Premium HMI and Movicon (automatic detection)
+- **Project Files**: `.hmiprj` / `.movprj` (project files), `.hmiscr` / `.movscr` (script files)
+- **Translation Services**: DeepL, Google Translate, Microsoft Translator API integration
+- **Platforms**: Windows, macOS, Linux (Tauri-based cross-platform application)
+
 ## Recent changes (changelog)
 
-Below is an extended summary of recent modifications (frontend and backend), test instructions and developer notes.
+Below is an extended summary of recent modifications (frontend and backend), focusing on translation management and HMI compatibility.
 
 ### Key changes
 
-- Single `Add` button with dropdown: contains `Add one` (single form) and `Magic add` (bulk modal).
-- "Bulk add" modal with smart parsing (`src/routes/home/table/+page.svelte`): supports several pasted formats (labelled pairs `desc:`/`code:`, blank-line separated blocks, single-line `desc code`, or alternating lines). It's designed to simplify fast imports of many cheats.
-- Migration to stable identifiers: lists now use `id` as the Svelte key to avoid duplicate/duplicate DOM elements.
-- Robust drag & drop: integration with SortableJS (handle, fallbackOnBody, ghost/chosen classes) and order saving via `update_record_order` that sends an array of `id`s to the backend.
-- Row selection + header Up/Down controls: select a single row and move it with header arrows; a toast appears if nothing is selected.
-- Per-row Up/Down buttons and actions: each row has actions (View, Edit, Move up/down, Delete).
-- Edit page uses `id`: the edit link and page now look up the record by `id` (no longer by `desc`).
-- Home refresh after import: after importing a `.cht` the table list is reloaded automatically.
-- Logo functionality: frontend `fetchAndSetLogo()` calls the backend which tries to fetch images from RAWG/TheGamesDB and save them for the table.
-- Backend localization → i18n keys: the backend now returns error keys (e.g. `settings.api_key_missing`, `home.no_game_found_rawg`, `table.duplicate_desc`) instead of hard-coded Italian strings. These keys are translated in `src/lib/i18n/it.json` and `src/lib/i18n/en.json`.
+- **Cross-platform HMI Support**: Full compatibility with both Premium HMI and Movicon project formats, with automatic detection and file extension handling.
+- **Translation Record Management**: Advanced record management with `Add one` (single form) and bulk import capabilities for efficient translation workflow.
+- **Smart Deletion Logic**: Intelligent confirmation system that only prompts for deletion when records contain actual translations or keys, preventing accidental data loss.
+- **Stable Record Identifiers**: Migration to `id`-based record management to ensure consistent data handling and avoid DOM conflicts.
+- **Advanced Record Organization**: Integration with SortableJS for drag & drop functionality, with order saving via `update_record_order` backend calls.
+- **Row-level Actions**: Each translation record includes dedicated actions (View, Edit, Move up/down, Delete) for granular control.
+- **ID-based Navigation**: Edit pages and record lookups now use stable `id` references instead of description-based routing.
+- **Auto-refresh on Import**: Automatic table refresh after HMI project import to reflect newly detected strings.
+- **AI Translation Integration**: Backend API connections to external translation services with configurable API keys and service selection.
+- **Complete Internationalization**: Backend returns i18n keys (e.g. `settings.api_key_missing`, `home.project_imported`, `table.translation_saved`) instead of hardcoded strings, with full Italian and English translations in `src/lib/i18n/{it.json,en.json}`.
+
+## Installation & Usage
+
+1. **Download**: Get the latest release for your platform from the releases page
+2. **Import Project**: Use "Import HMI Project" to load your `.hmiprj` or `.movprj` file
+3. **Configure Translation Services**: Set up API keys for DeepL, Google Translate, or Microsoft Translator in Settings
+4. **Manage Translations**: Add, edit, and organize your translation records
+5. **Export**: Generate translated project files or export to various formats
+
+## Technical Architecture
+
+- **Frontend**: SvelteKit with Tailwind CSS and Bootstrap components
+- **Backend**: Rust with Tauri for cross-platform desktop functionality  
+- **Database**: SQLite for local translation storage and project management
+- **APIs**: Integration with major translation service providers
+- **File Processing**: Native handling of HMI project file formats
 
 ## Contributing
 
-If you'd like to contribute: open an issue or a PR with a clear description of the feature or bug and, if possible, include reproduction steps. For changes to the bulk parser, include real input examples you want supported.
+If you'd like to contribute: open an issue or a PR with a clear description of the feature or bug. For translation service integrations, include API documentation references and test cases.
+
+## Support
+
+This tool is designed for HMI developers working with Premium HMI and Movicon systems. For questions about specific HMI project formats or translation workflows, please include sample project files when reporting issues.
 
 ---
 
-For questions or support, contact the maintainer.
+*HMITranslator - Simplifying multilingual HMI development*

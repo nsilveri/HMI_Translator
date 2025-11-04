@@ -31,7 +31,7 @@
 			<div class="flex justify-between h-8">
 				<div class="flex">
 					<a href="/" class="flex-shrink-0 flex items-center text-xl font-bold text-center text-gray-900">
-						SilCheat
+						HMI Translator
 					</a>
 				</div>
 			</div>

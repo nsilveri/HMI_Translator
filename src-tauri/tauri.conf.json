@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
-  "productName": "SilCheat",
+  "productName": "HMI Translator",
   "version": "0.1.0",
   "identifier": "com.silcheat.app",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "SilCheat",
+        "title": "HMI Translator",
         "width": 800,
         "height": 600,
         "resizable": true
