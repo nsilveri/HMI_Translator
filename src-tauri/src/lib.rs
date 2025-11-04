@@ -518,7 +518,8 @@ fn find_keys_in_project(directory_path: String, project_name: String) -> Result<
             if file_path.is_dir() {
                 scan_directory(&file_path, keys)?;
             } else if let Some(name) = file_path.file_name().and_then(|n| n.to_str()) {
-                if name.to_lowercase().ends_with(".hmiscr") {
+                let name_lower = name.to_lowercase();
+                if name_lower.ends_with(".hmiscr") || name_lower.ends_with(".movscr") {
                     println!("Scansiono file: {}", file_path.display());
 
                     // --- Lettura file robusta (UTF-8 o UTF-16) ---
@@ -1799,16 +1800,20 @@ fn get_export_preview(table_name: String) -> Result<serde_json::Value, String> {
         return Err("Percorso progetto non disponibile".to_string());
     }
 
-    // Find .hmiprj file in project path to get the project name
+    // Find .hmiprj or .movprj file in project path to get the project name
     let mut project_name = table_name.clone(); // fallback to table name
     for entry in fs::read_dir(&project_path).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         if path.is_file() {
             if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                if file_name.to_lowercase().ends_with(".hmiprj") {
+                let file_name_lower = file_name.to_lowercase();
+                if file_name_lower.ends_with(".hmiprj") || file_name_lower.ends_with(".movprj") {
                     // Extract project name without extension
-                    if let Some(name_without_ext) = file_name.strip_suffix(".hmiprj").or_else(|| file_name.strip_suffix(".HMIPRJ")) {
+                    if let Some(name_without_ext) = file_name.strip_suffix(".hmiprj")
+                        .or_else(|| file_name.strip_suffix(".HMIPRJ"))
+                        .or_else(|| file_name.strip_suffix(".movprj"))
+                        .or_else(|| file_name.strip_suffix(".MOVPRJ")) {
                         project_name = name_without_ext.to_string();
                         break;
                     }
@@ -1891,16 +1896,20 @@ fn export_translations_per_language(table_name: String) -> Result<String, String
         return Err("Percorso progetto non disponibile".to_string());
     }
 
-    // Find .hmiprj file in project path to get the project name
+    // Find .hmiprj or .movprj file in project path to get the project name
     let mut project_name = table_name.clone(); // fallback to table name
     for entry in fs::read_dir(&project_path).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
         if path.is_file() {
             if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
-                if file_name.to_lowercase().ends_with(".hmiprj") {
+                let file_name_lower = file_name.to_lowercase();
+                if file_name_lower.ends_with(".hmiprj") || file_name_lower.ends_with(".movprj") {
                     // Extract project name without extension
-                    if let Some(name_without_ext) = file_name.strip_suffix(".hmiprj").or_else(|| file_name.strip_suffix(".HMIPRJ")) {
+                    if let Some(name_without_ext) = file_name.strip_suffix(".hmiprj")
+                        .or_else(|| file_name.strip_suffix(".HMIPRJ"))
+                        .or_else(|| file_name.strip_suffix(".movprj"))
+                        .or_else(|| file_name.strip_suffix(".MOVPRJ")) {
                         project_name = name_without_ext.to_string();
                         break;
                     }

@@ -544,10 +544,27 @@
     editValue = '';
   }
 
-  // Funzione per mostrare il popup di conferma eliminazione
+  // Funzione per mostrare il popup di conferma eliminazione (o eliminare direttamente se non ha traduzioni)
   function confirmDeleteRecord(recordId) {
-    recordToDelete = recordId;
-    showDeleteModal = true;
+    const record = records.find(r => r.id === recordId);
+    if (!record) return;
+    
+    // Controlla se il record ha traduzioni nelle colonne lingua
+    const languageColumns = visibleColumns.filter(col => isLanguageColumn(col));
+    const hasTranslations = languageColumns.some(col => record[col] && record[col].trim());
+    
+    // Controlla se il record ha una key
+    const hasKey = record['key'] && record['key'].trim();
+    
+    if (!hasTranslations && !hasKey) {
+      // Nessuna traduzione e nessuna key presente, elimina direttamente senza conferma
+      recordToDelete = recordId;
+      deleteRecord();
+    } else {
+      // Ha traduzioni o ha una key, mostra conferma
+      recordToDelete = recordId;
+      showDeleteModal = true;
+    }
   }
 
   // Funzione per eliminare completamente un record
