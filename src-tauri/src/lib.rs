@@ -1,6 +1,7 @@
 use rusqlite::{params_from_iter, params, Connection, Result};
 use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 use base64::{Engine as _, engine::general_purpose};
 use reqwest::Client;
 use serde::Deserialize;
@@ -16,7 +17,7 @@ fn get_tables() -> Result<Vec<std::collections::HashMap<String, String>>, String
     conn.execute("CREATE TABLE IF NOT EXISTS table_images (table_name TEXT PRIMARY KEY, image TEXT);", []).map_err(|e| e.to_string())?;
     // Create settings table if not exists
     conn.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);", []).map_err(|e| e.to_string())?;
-    let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'table_images' AND name != 'settings' AND name != 'projects' AND name != 'project_languages';").map_err(|e| e.to_string())?;
+    let mut stmt = conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name != 'table_images' AND name != 'settings' AND name != 'projects' AND name != 'project_languages' AND name NOT LIKE '%_imports';").map_err(|e| e.to_string())?;
     let table_names: Vec<String> = stmt.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?.map(|r| r.unwrap()).collect();
     let mut tables = Vec::new();
     for name in table_names {
@@ -269,8 +270,92 @@ async fn fetch_and_set_logo(tableName: String, gameName: String) -> Result<Strin
     }
 }
 
+fn parse_translation_file_content(file_path: &Path) -> Result<std::collections::HashMap<String, String>, String> {
+    let content = fs::read_to_string(file_path).map_err(|e| e.to_string())?;
+    let mut translations = std::collections::HashMap::new();
+    
+    // Try to parse as XML first
+    if content.contains("<?xml") && content.contains("<strings>") {
+        // Parse XML format
+        for line in content.lines() {
+            if line.contains("<item key=") {
+                if let Some(key_start) = line.find("key=\"") {
+                    if let Some(key_end) = line[key_start + 5..].find("\"") {
+                        let key = &line[key_start + 5..key_start + 5 + key_end];
+                        
+                        if let Some(value_start) = line.find("value=\"") {
+                            if let Some(value_end) = line[value_start + 7..].find("\"") {
+                                let value = &line[value_start + 7..value_start + 7 + value_end];
+                                // Unescape XML entities
+                                let unescaped_key = key.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'");
+                                let unescaped_value = value.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'");
+                                translations.insert(unescaped_key, unescaped_value);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Parse key=value format
+        for line in content.lines() {
+            if let Some(eq_pos) = line.find('=') {
+                let key = line[..eq_pos].trim().to_string();
+                let value = line[eq_pos + 1..].trim().to_string();
+                translations.insert(key, value);
+            }
+        }
+    }
+    
+    Ok(translations)
+}
+
+fn check_if_content_already_imported(file_path: &Path, table_name: &str, language_column: &str) -> Result<bool, String> {
+    let file_translations = parse_translation_file_content(file_path)?;
+    
+    if file_translations.is_empty() {
+        return Ok(false);
+    }
+    
+    // Get database content for this language
+    let db_path = "../data/database.db";
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    let mut stmt = conn.prepare(&format!("SELECT key, {} FROM `{}`", language_column, table_name)).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| {
+        let key: String = row.get("key")?;
+        let value: Option<String> = row.get(language_column).unwrap_or(None);
+        Ok((key, value.unwrap_or_default()))
+    }).map_err(|e| e.to_string())?;
+    
+    let mut db_translations = std::collections::HashMap::new();
+    for row in rows {
+        let (key, value) = row.map_err(|e| e.to_string())?;
+        if !value.is_empty() {
+            db_translations.insert(key, value);
+        }
+    }
+    
+    // Check if file content matches database content
+    if file_translations.len() != db_translations.len() {
+        return Ok(false);
+    }
+    
+    for (key, file_value) in &file_translations {
+        if let Some(db_value) = db_translations.get(key) {
+            if file_value != db_value {
+                return Ok(false);
+            }
+        } else {
+            return Ok(false);
+        }
+    }
+    
+    Ok(true)
+}
+
 #[tauri::command]
-fn get_translation_files_in_directory(directory_path: String) -> Result<Vec<std::collections::HashMap<String, String>>, String> {
+fn get_translation_files_in_directory(directory_path: String, table_name: String) -> Result<Vec<std::collections::HashMap<String, String>>, String> {
     let path = Path::new(&directory_path);
     
     if !path.is_dir() {
@@ -328,7 +413,36 @@ fn get_translation_files_in_directory(directory_path: String) -> Result<Vec<std:
                         };
                         
                         file_info.insert("language_code".to_string(), language_code.to_string());
-                        translation_files.push(file_info);
+                        
+                        // Check if content is already imported
+                        let mut already_imported = false;
+                        
+                        // Find matching column in database
+                        if let Ok(columns) = get_table_columns(table_name.clone()) {
+                            for column in &columns {
+                                if column == language_code || 
+                                   (language_code == "en" && (column == "eng" || column == "en")) ||
+                                   (language_code == "it" && (column == "ita" || column == "it")) ||
+                                   (language_code == "fr" && (column == "fra" || column == "fre" || column == "fr")) ||
+                                   (language_code == "de" && (column == "deu" || column == "ger" || column == "de")) ||
+                                   (language_code == "es" && (column == "esp" || column == "spa" || column == "es")) {
+                                    
+                                    if let Ok(is_imported) = check_if_content_already_imported(&file_path, &table_name, column) {
+                                        if is_imported {
+                                            already_imported = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        file_info.insert("already_imported".to_string(), already_imported.to_string());
+                        
+                        // Only add to list if not already imported or if we want to show all files
+                        if !already_imported {
+                            translation_files.push(file_info);
+                        }
                     }
                 }
             }
@@ -338,8 +452,15 @@ fn get_translation_files_in_directory(directory_path: String) -> Result<Vec<std:
     Ok(translation_files)
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+struct KeyWithFile {
+    key: String,
+    file: String,
+    full_line: String,
+}
+
 #[tauri::command]
-fn find_keys_in_project(directory_path: String, project_name: String) -> Result<Vec<String>, String> {
+fn find_keys_in_project(directory_path: String, project_name: String) -> Result<Vec<KeyWithFile>, String> {
     let base_path = Path::new(&directory_path);
     
     if !base_path.is_dir() {
@@ -384,159 +505,77 @@ fn find_keys_in_project(directory_path: String, project_name: String) -> Result<
         return Err(format!("Nessuna cartella in RESOURCES corrisponde al progetto '{}'. Cartelle disponibili controllate sopra.", project_name));
     }
     
-    let mut found_keys = std::collections::HashSet::new();
+    let mut found_keys = Vec::new();
     
     // Funzione ricorsiva per scansionare le directory
-    fn scan_directory(dir: &Path, keys: &mut std::collections::HashSet<String>) -> Result<(), String> {
+    fn scan_directory(dir: &Path, keys: &mut Vec<KeyWithFile>) -> Result<(), String> {
         let entries = fs::read_dir(dir).map_err(|e| e.to_string())?;
-        
+
         for entry in entries {
             let entry = entry.map_err(|e| e.to_string())?;
             let file_path = entry.path();
-            
-            if file_path.is_dir() {
-                // Scansiona ricorsivamente le sottodirectory
-                scan_directory(&file_path, keys)?;
-            } else if file_path.is_file() {
-                if let Some(file_name) = file_path.file_name() {
-                    if let Some(file_name_str) = file_name.to_str() {
-                        if file_name_str.to_lowercase().ends_with(".hmiscr") {
-                            // Prova prima a leggere come UTF-8, poi UTF-16
-                            let content = match fs::read_to_string(&file_path) {
-                                Ok(content) => content,
-                                Err(_) => {
-                                    match fs::read(&file_path) {
-                                        Ok(bytes) => {
-                                            // Prova UTF-16 LE con BOM
-                                            if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
-                                                let utf16_data: Vec<u16> = bytes[2..].chunks_exact(2)
-                                                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                                                    .collect();
-                                                match String::from_utf16(&utf16_data) {
-                                                    Ok(content) => content,
-                                                    Err(_) => String::from_utf8_lossy(&bytes).into_owned()
-                                                }
-                                            }
-                                            // Prova UTF-16 LE senza BOM
-                                            else if bytes.len() % 2 == 0 {
-                                                let utf16_data: Vec<u16> = bytes.chunks_exact(2)
-                                                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                                                    .collect();
-                                                match String::from_utf16(&utf16_data) {
-                                                    Ok(content) => {
-                                                        if content.contains("<?xml") {
-                                                            content
-                                                        } else {
-                                                            String::from_utf8_lossy(&bytes).into_owned()
-                                                        }
-                                                    },
-                                                    Err(_) => String::from_utf8_lossy(&bytes).into_owned()
-                                                }
-                                            } else {
-                                                String::from_utf8_lossy(&bytes).into_owned()
-                                            }
-                                        }
-                                        Err(_) => continue,
-                                    }
-                                }
-                            };
-                            
-                            println!("Debug: verifica presenza di pattern nel contenuto");
-                            
-                            // Test base: cerca stringhe semplici
-                            let has_text_tag = content.contains("<text");
-                            let has_text_close = content.contains("</text>");
-                            let has_cmd_manuali = content.contains("CMD MANUALI");
-                            let has_string = content.contains("STRING_");
-                            
-                            println!("Contiene '<text': {}", has_text_tag);
-                            println!("Contiene '</text>': {}", has_text_close);
-                            println!("Contiene 'CMD MANUALI': {}", has_cmd_manuali);
-                            println!("Contiene 'STRING_': {}", has_string);
-                            
-                            // Mostra un campione del contenuto per debug
-                            let sample_size = 2000.min(content.len());
-                            println!("CAMPIONE INIZIO FILE (primi {} caratteri):", sample_size);
-                            
-                            // Mostra carattere per carattere i primi 200 per vedere caratteri speciali
-                            let debug_sample = &content[0..200.min(content.len())];
-                            let mut debug_chars = String::new();
-                            for (i, ch) in debug_sample.chars().enumerate() {
-                                if ch.is_control() {
-                                    debug_chars.push_str(&format!("[{}]", ch as u32));
-                                } else {
-                                    debug_chars.push(ch);
-                                }
-                                if i > 200 { break; }
-                            }
-                            println!("DEBUG CARATTERI: {}", debug_chars);
-                            
-                            // Se contiene i tag, prova a trovarli
-                            if has_text_tag && has_text_close {
-                                println!("I tag ci sono, cerchiamo manualmente...");
-                                
-                                let mut pos = 0;
-                                let mut found_count = 0;
-                                
-                                while let Some(text_start) = content[pos..].find("<text") {
-                                    let absolute_text_start = pos + text_start;
-                                    found_count += 1;
-                                    
-                                    println!("Trovato tag <text numero {} alla posizione {}", found_count, absolute_text_start);
-                                    
-                                    // Trova la fine del tag di apertura >
-                                    if let Some(tag_end) = content[absolute_text_start..].find('>') {
-                                        let content_start = absolute_text_start + tag_end + 1;
-                                        
-                                        // Trova il tag di chiusura </text>
-                                        if let Some(close_tag) = content[content_start..].find("</text>") {
-                                            let content_end = content_start + close_tag;
-                                            
-                                            // Estrai il contenuto tra i tag
-                                            let text_content = &content[content_start..content_end];
-                                            let key_str = text_content.trim();
-                                            
-                                            println!("Contenuto tag {}: '{}'", found_count, key_str);
-                                            
-                                            // Filtra solo contenuti validi (non XML, non troppo lunghi, non numeri puri)
-                                            if !key_str.is_empty() 
-                                                && key_str.len() < 100  // Non troppo lungo
-                                                && !key_str.contains('<')  // Non contiene altri tag XML
-                                                && !key_str.contains('>')  // Non contiene altri tag XML
-                                                && !key_str.chars().all(|c| c.is_numeric() || c == '0')  // Non è solo numeri o solo zeri
-                                                && key_str.len() > 1  // Almeno 2 caratteri
-                                            {
-                                                println!("Chiave valida aggiunta: '{}'", key_str);
-                                                keys.insert(key_str.to_string());
-                                            } else {
-                                                println!("Contenuto scartato (troppo lungo, contiene XML o solo numeri): '{}'", 
-                                                    if key_str.len() > 50 { &key_str[0..50] } else { key_str });
-                                            }
-                                            
-                                            // Continua la ricerca dopo questo tag
-                                            pos = content_end + 7;
-                                        } else {
-                                            pos = absolute_text_start + 5;
-                                        }
-                                    } else {
-                                        pos = absolute_text_start + 5;
-                                    }
-                                    
-                                    if found_count >= 5 { 
-                                        println!("Fermi ai primi 5 per debug...");
-                                        break; 
-                                    }
-                                }
-                            }
-                            
-                            println!("File {}: estratte {} chiavi uniche", 
-                                file_path.display(), keys.len());
 
+            if file_path.is_dir() {
+                scan_directory(&file_path, keys)?;
+            } else if let Some(name) = file_path.file_name().and_then(|n| n.to_str()) {
+                if name.to_lowercase().ends_with(".hmiscr") {
+                    println!("Scansiono file: {}", file_path.display());
+
+                    // --- Lettura file robusta (UTF-8 o UTF-16) ---
+                    let content = match fs::read_to_string(&file_path) {
+                        Ok(c) => c,
+                        Err(_) => {
+                            let bytes = fs::read(&file_path).map_err(|e| e.to_string())?;
+                            if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+                                let utf16: Vec<u16> = bytes[2..]
+                                    .chunks_exact(2)
+                                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                                    .collect();
+                                String::from_utf16(&utf16).unwrap_or_default()
+                            } else {
+                                String::from_utf8_lossy(&bytes).into_owned()
+                            }
+                        }
+                    };
+
+                    // --- Dividi in righe ---
+                    let mut local_count = 0;
+                    for line in content.lines() {
+                        if line.contains("</text>") {
+                            // Trova la parte tra '>' e '</text>'
+                            if let Some(start) = line.find('>') {
+                                if let Some(end) = line.find("</text>") {
+                                    if end > start + 1 {
+                                        let key_str = &line[start + 1..end];
+                                        let key_str = key_str.trim();
+
+                                        // Filtra contenuti non validi
+                                        if key_str.is_empty()
+                                            || key_str.len() > 100
+                                            || key_str.contains('<')
+                                            || key_str.contains('>')
+                                            || key_str.chars().all(|c| c.is_numeric() || c == '0')
+                                        {
+                                            continue;
+                                        }
+
+                                        keys.push(KeyWithFile {
+                                            key: key_str.to_string(),
+                                            file: name.to_string(),
+                                            full_line: line.trim().to_string(),
+                                        });
+                                        local_count += 1;
+                                    }
+                                }
+                            }
                         }
                     }
+
+                    println!("  → Estratte {} chiavi da {}", local_count, name);
                 }
             }
         }
+
         Ok(())
     }
     
@@ -545,20 +584,19 @@ fn find_keys_in_project(directory_path: String, project_name: String) -> Result<
         scan_directory(&folder_path, &mut found_keys)?;
     }
     
-    // Converti HashSet in Vec e ordina
-    let mut keys_vec: Vec<String> = found_keys.into_iter().collect();
-    keys_vec.sort();
+    // Ordina per chiave
+    found_keys.sort_by(|a, b| a.key.cmp(&b.key));
     
-    Ok(keys_vec)
+    Ok(found_keys)
 }
 
 #[tauri::command]
-fn import_project_keys(project_name: String, keys: Vec<String>) -> Result<String, String> {
+fn import_project_keys(project_name: String, keys: Vec<KeyWithFile>) -> Result<String, String> {
     let db_path = "../data/projects.db";
     fs::create_dir_all("../data").map_err(|e| e.to_string())?;
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
     
-    // Prima assicuriamoci che la colonna keys_project esista
+    // Prima assicuriamoci che la colonna keys_project esista e che key possa essere NULL
     let check_column_sql = format!(
         "SELECT COUNT(*) as count FROM pragma_table_info('{}') WHERE name='keys_project'",
         project_name
@@ -578,34 +616,515 @@ fn import_project_keys(project_name: String, keys: Vec<String>) -> Result<String
         println!("Aggiunta colonna keys_project alla tabella {}", project_name);
     }
     
+    // Verifica se la colonna key ha constraint NOT NULL e lo rimuove se necessario
+    // Purtroppo SQLite non supporta ALTER COLUMN, quindi creiamo una nuova tabella
+    let table_info_sql = format!("PRAGMA table_info('{}')", project_name);
+    let mut stmt = conn.prepare(&table_info_sql).map_err(|e| e.to_string())?;
+    let mut key_is_not_null = false;
+    
+    let rows = stmt.query_map([], |row| {
+        let column_name: String = row.get("name")?;
+        let not_null: i32 = row.get("notnull")?;
+        if column_name == "key" && not_null == 1 {
+            key_is_not_null = true;
+        }
+        Ok(())
+    }).map_err(|e| e.to_string())?;
+    
+    for _ in rows {
+        // Itera per eseguire la query
+    }
+    
+    if key_is_not_null {
+        println!("Aggiornamento schema tabella {} per permettere key NULL", project_name);
+        
+        // Prima ottieni TUTTE le colonne esistenti
+        let mut columns = Vec::new();
+        let mut column_definitions = Vec::new();
+        
+        let table_info_sql = format!("PRAGMA table_info('{}')", project_name);
+        let mut stmt = conn.prepare(&table_info_sql).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| {
+            let name: String = row.get("name")?;
+            let column_type: String = row.get("type")?;
+            let not_null: i32 = row.get("notnull")?;
+            let pk: i32 = row.get("pk")?;
+            let default_value: Option<String> = row.get("dflt_value")?;
+            
+            columns.push(name.clone());
+            
+            // Costruisci la definizione della colonna
+            let mut def = format!("{} {}", name, column_type);
+            if pk == 1 {
+                def.push_str(" PRIMARY KEY AUTOINCREMENT");
+            } else if not_null == 1 && name != "key" {
+                def.push_str(" NOT NULL");
+            }
+            if let Some(default) = default_value {
+                def.push_str(&format!(" DEFAULT {}", default));
+            } else if name == "created_at" {
+                def.push_str(" DEFAULT CURRENT_TIMESTAMP");
+            }
+            
+            column_definitions.push(def);
+            Ok(())
+        }).map_err(|e| e.to_string())?;
+        
+        for _ in rows {
+            // Esegui la query
+        }
+        
+        // Aggiungi keys_project se non esiste già
+        if !columns.contains(&"keys_project".to_string()) {
+            columns.push("keys_project".to_string());
+            column_definitions.push("keys_project TEXT".to_string());
+        }
+        
+        // Crea tabella temporanea con TUTTE le colonne esistenti
+        let temp_table = format!("{}_temp", project_name);
+        let create_temp_sql = format!(
+            "CREATE TABLE `{}` ({})",
+            temp_table,
+            column_definitions.join(", ")
+        );
+        conn.execute(&create_temp_sql, []).map_err(|e| e.to_string())?;
+        
+        // Copia TUTTI i dati dalla tabella originale
+        let columns_list = columns.join(", ");
+        let copy_sql = format!(
+            "INSERT INTO `{}` ({}) SELECT {} FROM `{}`",
+            temp_table, columns_list, columns_list, project_name
+        );
+        conn.execute(&copy_sql, []).map_err(|e| e.to_string())?;
+        
+        // Elimina la tabella originale
+        let drop_sql = format!("DROP TABLE `{}`", project_name);
+        conn.execute(&drop_sql, []).map_err(|e| e.to_string())?;
+        
+        // Rinomina la tabella temporanea
+        let rename_sql = format!("ALTER TABLE `{}` RENAME TO `{}`", temp_table, project_name);
+        conn.execute(&rename_sql, []).map_err(|e| e.to_string())?;
+        
+        println!("Schema tabella {} aggiornato con successo", project_name);
+    }
+    
     let mut imported_count = 0;
     let mut updated_count = 0;
+    let mut skipped_count = 0;
     
-    for key in keys {
-        // Verifica se la chiave esiste già
-        let check_sql = format!("SELECT id FROM `{}` WHERE key = ?", project_name);
-        let key_exists = conn.query_row(&check_sql, [&key], |_| Ok(())).is_ok();
+    for key_info in keys {
+        // Verifica se la chiave esiste già in qualsiasi campo (key o keys_project)
+        let check_key_sql = format!("SELECT id FROM `{}` WHERE key = ? OR keys_project = ?", project_name);
+        let key_exists = conn.query_row(&check_key_sql, [&key_info.key, &key_info.key], |_| Ok(())).is_ok();
         
         if key_exists {
-            // Aggiorna il campo keys_project per questa chiave
-            let update_sql = format!(
-                "UPDATE `{}` SET keys_project = ? WHERE key = ?",
-                project_name
-            );
-            conn.execute(&update_sql, [&key, &key]).map_err(|e| e.to_string())?;
-            updated_count += 1;
+            // Verifica se esiste già nella colonna keys_project
+            let check_keys_project_sql = format!("SELECT id FROM `{}` WHERE keys_project = ?", project_name);
+            let exists_in_keys_project = conn.query_row(&check_keys_project_sql, [&key_info.key], |_| Ok(())).is_ok();
+            
+            if !exists_in_keys_project {
+                // Esiste nella colonna key ma non in keys_project, aggiorna
+                let update_sql = format!(
+                    "UPDATE `{}` SET keys_project = ? WHERE key = ?",
+                    project_name
+                );
+                conn.execute(&update_sql, [&key_info.key, &key_info.key]).map_err(|e| e.to_string())?;
+                updated_count += 1;
+            } else {
+                // Esiste già in keys_project, salta l'importazione
+                skipped_count += 1;
+            }
         } else {
-            // Inserisci nuova riga con la chiave SOLO nel campo keys_project (key rimane NULL)
+            // La chiave non esiste da nessuna parte, inserisci nuova riga
             let insert_sql = format!(
                 "INSERT INTO `{}` (keys_project) VALUES (?)",
                 project_name
             );
-            conn.execute(&insert_sql, [&key]).map_err(|e| e.to_string())?;
+            conn.execute(&insert_sql, [&key_info.key]).map_err(|e| e.to_string())?;
             imported_count += 1;
         }
     }
     
-    Ok(format!("Importate {} nuove chiavi, aggiornate {} chiavi esistenti nella colonna keys_project", imported_count, updated_count))
+    let total_processed = imported_count + updated_count + skipped_count;
+    Ok(format!(
+        "Processate {} chiavi: {} nuove importate, {} aggiornate, {} saltate (già esistenti)", 
+        total_processed, imported_count, updated_count, skipped_count
+    ))
+}
+
+#[tauri::command]
+fn get_project_keys(project_name: String) -> Result<Vec<String>, String> {
+    let db_path = "../data/projects.db";
+    fs::create_dir_all("../data").map_err(|e| e.to_string())?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    // Controlla se la colonna keys_project esiste
+    let check_column_sql = format!(
+        "SELECT COUNT(*) as count FROM pragma_table_info('{}') WHERE name='keys_project'",
+        project_name
+    );
+    
+    let column_exists: i32 = conn.query_row(&check_column_sql, [], |row| {
+        Ok(row.get::<_, i32>("count")?)
+    }).unwrap_or(0);
+    
+    if column_exists == 0 {
+        return Ok(vec![]); // Se la colonna non esiste, nessuna chiave
+    }
+    
+    // Recupera tutte le chiavi keys_project non NULL
+    let query_sql = format!(
+        "SELECT keys_project FROM `{}` WHERE keys_project IS NOT NULL ORDER BY keys_project",
+        project_name
+    );
+    
+    let mut stmt = conn.prepare(&query_sql).map_err(|e| e.to_string())?;
+    let keys_iter = stmt.query_map([], |row| {
+        row.get::<_, String>("keys_project")
+    }).map_err(|e| e.to_string())?;
+    
+    let mut keys = Vec::new();
+    for key_result in keys_iter {
+        keys.push(key_result.map_err(|e| e.to_string())?);
+    }
+    
+    Ok(keys)
+}
+
+#[tauri::command]
+fn import_translation_file_from_path(table_name: String, language_code: String, file_path: String) -> Result<String, String> {
+    // Leggi il file dal filesystem
+    let content = std::fs::read_to_string(&file_path).map_err(|e| format!("Errore lettura file {}: {}", file_path, e))?;
+    
+    // Usa la funzione esistente per importare il contenuto
+    import_translation_file_with_merge(table_name, language_code, content, file_path)
+}
+
+#[tauri::command]
+fn import_translation_file_with_merge(table_name: String, language_code: String, xml_content: String, file_path: String) -> Result<String, String> {
+    let db_path = "../data/projects.db";
+    fs::create_dir_all("../data").map_err(|e| e.to_string())?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    // Assicurati che la colonna per la lingua esista
+    let column_name = language_code.clone();
+    let check_column_sql = format!(
+        "SELECT COUNT(*) as count FROM pragma_table_info('{}') WHERE name='{}'",
+        table_name, column_name
+    );
+    
+    let column_exists: i32 = conn.query_row(&check_column_sql, [], |row| {
+        Ok(row.get::<_, i32>("count")?)
+    }).unwrap_or(0);
+    
+    if column_exists == 0 {
+        let add_column_sql = format!("ALTER TABLE `{}` ADD COLUMN `{}` TEXT", table_name, column_name);
+        conn.execute(&add_column_sql, []).map_err(|e| e.to_string())?;
+    }
+    
+    // Assicurati che la colonna keys_project esista
+    let check_keys_project_sql = format!(
+        "SELECT COUNT(*) as count FROM pragma_table_info('{}') WHERE name='keys_project'",
+        table_name
+    );
+    
+    let keys_project_exists: i32 = conn.query_row(&check_keys_project_sql, [], |row| {
+        Ok(row.get::<_, i32>("count")?)
+    }).unwrap_or(0);
+    
+    if keys_project_exists == 0 {
+        let add_keys_project_sql = format!("ALTER TABLE `{}` ADD COLUMN keys_project TEXT", table_name);
+        conn.execute(&add_keys_project_sql, []).map_err(|e| e.to_string())?;
+    }
+    
+    // Crea tabella per tracciare i file importati se non esiste
+    let create_imports_table_sql = format!(
+        "CREATE TABLE IF NOT EXISTS `{}_imports` (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            language_code TEXT NOT NULL,
+            import_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            translations_count INTEGER NOT NULL,
+            UNIQUE(file_path, language_code)
+        )",
+        table_name
+    );
+    conn.execute(&create_imports_table_sql, []).map_err(|e| e.to_string())?;
+    
+    // Debug: mostra le prime righe del file per capire il formato (commentato per produzione)
+    // println!("Contenuto file (prime 10 righe):");
+    // for (i, line) in xml_content.lines().take(10).enumerate() {
+    //     println!("Riga {}: {}", i + 1, line);
+    // }
+    
+    // Parsa l'XML e estrai le traduzioni
+    let mut translations = std::collections::HashMap::new();
+    
+    // Parsing per diversi formati XML
+    let lines: Vec<&str> = xml_content.lines().collect();
+    for line in lines {
+        let trimmed = line.trim();
+        
+        // Formato 1: <string id="KEY">VALORE</string>
+        if trimmed.starts_with("<string id=\"") && trimmed.contains("</string>") {
+            if let Some(id_start) = trimmed.find("id=\"") {
+                if let Some(id_end) = trimmed[id_start + 4..].find("\"") {
+                    let key = &trimmed[id_start + 4..id_start + 4 + id_end];
+                    
+                    if let Some(content_start) = trimmed.find(">") {
+                        if let Some(content_end) = trimmed.rfind("</string>") {
+                            let content = &trimmed[content_start + 1..content_end];
+                            translations.insert(key.to_string(), content.to_string());
+                            // println!("Trovata traduzione formato 1: {} = {}", key, content);
+                        }
+                    }
+                }
+            }
+        }
+        // Formato 2: <item key="CHIAVE" value="VALORE"/>
+        else if trimmed.starts_with("<item key=\"") && trimmed.contains("value=\"") {
+            // Estrai la chiave
+            if let Some(key_start) = trimmed.find("key=\"") {
+                if let Some(key_end) = trimmed[key_start + 5..].find("\"") {
+                    let key = &trimmed[key_start + 5..key_start + 5 + key_end];
+                    
+                    // Estrai il valore
+                    if let Some(value_start) = trimmed.find("value=\"") {
+                        if let Some(value_end) = trimmed[value_start + 7..].find("\"") {
+                            let value = &trimmed[value_start + 7..value_start + 7 + value_end];
+                            translations.insert(key.to_string(), value.to_string());
+                            // println!("Trovata traduzione formato 2: {} = {}", key, value);
+                        }
+                    }
+                }
+            }
+        }
+        // Formato 3: chiave tra > e </text> (come hai detto prima)
+        else if trimmed.contains(">") && trimmed.contains("</text>") {
+            if let Some(content_start) = trimmed.find(">") {
+                if let Some(content_end) = trimmed.rfind("</text>") {
+                    let key = &trimmed[content_start + 1..content_end];
+                    // Per ora usiamo la chiave come valore, poi dovremo capire dove trovare la traduzione
+                    translations.insert(key.to_string(), key.to_string());
+                    // println!("Trovata chiave formato 3: {}", key);
+                }
+            }
+        }
+    }
+    
+    // println!("Totale traduzioni trovate: {}", translations.len());
+    
+    let mut imported_count = 0;
+    let mut updated_count = 0;
+    
+    for (key, translation) in translations {
+        // Prima controlla se esiste un record con questa chiave in keys_project
+        let check_keys_project_sql = format!(
+            "SELECT id, key FROM `{}` WHERE keys_project = ?",
+            table_name
+        );
+        
+        let found_in_keys_project = conn.query_row(&check_keys_project_sql, [&key], |row| {
+            Ok((
+                row.get::<_, i32>("id")?,
+                row.get::<_, Option<String>>("key")?
+            ))
+        });
+        
+        match found_in_keys_project {
+            Ok((id, existing_key)) => {
+                // Trovato in keys_project, aggiorna il record
+                // Se key è vuota, aggiungi la chiave del file, altrimenti mantieni quella esistente
+                let final_key = match existing_key {
+                    Some(ref k) if !k.is_empty() => k.clone(),
+                    _ => key.clone()
+                };
+                
+                let update_sql = format!(
+                    "UPDATE `{}` SET key = ?, `{}` = ? WHERE id = ?",
+                    table_name, column_name
+                );
+                conn.execute(&update_sql, [&final_key, &translation, &id.to_string()]).map_err(|e| e.to_string())?;
+                updated_count += 1;
+            }
+            Err(_) => {
+                // Non trovato in keys_project, controlla se esiste già in key
+                let check_key_sql = format!(
+                    "SELECT id FROM `{}` WHERE key = ?",
+                    table_name
+                );
+                
+                match conn.query_row(&check_key_sql, [&key], |row| {
+                    Ok(row.get::<_, i32>("id")?)
+                }) {
+                    Ok(id) => {
+                        // Trovato in key, aggiorna solo la traduzione
+                        let update_sql = format!(
+                            "UPDATE `{}` SET `{}` = ? WHERE id = ?",
+                            table_name, column_name
+                        );
+                        conn.execute(&update_sql, [&translation, &id.to_string()]).map_err(|e| e.to_string())?;
+                        updated_count += 1;
+                    }
+                    Err(_) => {
+                        // Chiave non presente in nessuna colonna, crea un nuovo record
+                        // Questa chiave proviene dal file di traduzione e deve essere importata
+                        let insert_sql = format!(
+                            "INSERT INTO `{}` (key, `{}`) VALUES (?, ?)",
+                            table_name, column_name
+                        );
+                        conn.execute(&insert_sql, [&key, &translation]).map_err(|e| e.to_string())?;
+                        imported_count += 1;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Registra l'importazione nella tabella di tracking (se abbiamo importato qualcosa)
+    if imported_count > 0 || updated_count > 0 {
+        let total_translations = imported_count + updated_count;
+        let insert_import_sql = format!(
+            "INSERT OR REPLACE INTO `{}_imports` (file_path, file_name, language_code, translations_count) VALUES (?, ?, ?, ?)",
+            table_name
+        );
+        
+        // Estrai il nome del file dal path
+        let file_name = std::path::Path::new(&file_path).file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+            
+        conn.execute(&insert_import_sql, [&file_path, &file_name, &language_code, &total_translations.to_string()]).map_err(|e| e.to_string())?;
+    }
+    
+    Ok(format!("Importate {} nuove traduzioni, aggiornate {} traduzioni esistenti per la lingua {}", imported_count, updated_count, language_code))
+}
+
+#[derive(serde::Serialize)]
+struct ImportedFile {
+    id: i32,
+    file_path: String,
+    file_name: String,
+    language_code: String,
+    import_date: String,
+    translations_count: i32,
+}
+
+#[tauri::command]
+fn get_imported_files(project_name: String) -> Result<Vec<ImportedFile>, String> {
+    // Protezione contro nomi di tabelle malformati con _imports ripetuti
+    let original_name = project_name.clone(); // Clone per il debug
+    let clean_project_name = if project_name.contains("_imports") {
+        // Trova la prima occorrenza di _imports e taglia tutto dopo
+        project_name.split("_imports").next().unwrap_or(&project_name).to_string()
+    } else {
+        project_name
+    };
+    
+    println!("get_imported_files - Original: '{}', Clean: '{}'", original_name, clean_project_name);
+    
+    let db_path = "../data/projects.db";
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    // Crea la tabella imports se non esiste (usando il nome pulito)
+    let create_imports_table_sql = format!(
+        "CREATE TABLE IF NOT EXISTS `{}_imports` (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            language_code TEXT NOT NULL,
+            import_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+            translations_count INTEGER NOT NULL,
+            UNIQUE(file_path, language_code)
+        )",
+        clean_project_name
+    );
+    conn.execute(&create_imports_table_sql, []).map_err(|e| e.to_string())?;
+    
+    let query_sql = format!(
+        "SELECT id, file_path, file_name, language_code, import_date, translations_count 
+         FROM `{}_imports` 
+         ORDER BY import_date DESC",
+        clean_project_name
+    );
+    
+    let mut stmt = conn.prepare(&query_sql).map_err(|e| e.to_string())?;
+    let file_iter = stmt.query_map([], |row| {
+        Ok(ImportedFile {
+            id: row.get("id")?,
+            file_path: row.get("file_path")?,
+            file_name: row.get("file_name")?,
+            language_code: row.get("language_code")?,
+            import_date: row.get("import_date")?,
+            translations_count: row.get("translations_count")?,
+        })
+    }).map_err(|e| e.to_string())?;
+    
+    let mut files = Vec::new();
+    for file in file_iter {
+        files.push(file.map_err(|e| e.to_string())?);
+    }
+    
+    Ok(files)
+}
+
+#[derive(serde::Serialize)]
+struct ProjectKeyDetail {
+    key: String,
+    exists_in_translations: bool,
+}
+
+#[tauri::command]
+fn get_project_keys_with_status(project_name: String) -> Result<Vec<ProjectKeyDetail>, String> {
+    let db_path = "../data/projects.db";
+    fs::create_dir_all("../data").map_err(|e| e.to_string())?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    
+    // Controlla se la colonna keys_project esiste
+    let check_column_sql = format!(
+        "SELECT COUNT(*) as count FROM pragma_table_info('{}') WHERE name='keys_project'",
+        project_name
+    );
+    
+    let column_exists: i32 = conn.query_row(&check_column_sql, [], |row| {
+        Ok(row.get::<_, i32>("count")?)
+    }).unwrap_or(0);
+    
+    if column_exists == 0 {
+        return Ok(vec![]); // Se la colonna non esiste, nessuna chiave
+    }
+    
+    // Recupera tutte le chiavi keys_project con verifica se esistono in key
+    let query_sql = format!(
+        "SELECT 
+            keys_project,
+            CASE 
+                WHEN EXISTS (SELECT 1 FROM `{}` t2 WHERE t2.key = t1.keys_project AND t2.key IS NOT NULL) 
+                THEN 1 
+                ELSE 0 
+            END as exists_in_translations
+         FROM `{}` t1 
+         WHERE keys_project IS NOT NULL 
+         ORDER BY keys_project",
+        project_name, project_name
+    );
+    
+    let mut stmt = conn.prepare(&query_sql).map_err(|e| e.to_string())?;
+    let keys_iter = stmt.query_map([], |row| {
+        Ok(ProjectKeyDetail {
+            key: row.get::<_, String>("keys_project")?,
+            exists_in_translations: row.get::<_, i32>("exists_in_translations")? == 1,
+        })
+    }).map_err(|e| e.to_string())?;
+    
+    let mut keys = Vec::new();
+    for key_result in keys_iter {
+        keys.push(key_result.map_err(|e| e.to_string())?);
+    }
+    
+    Ok(keys)
 }
 
 #[tauri::command]
@@ -719,18 +1238,53 @@ fn get_project_languages(project_name: String) -> Result<Vec<std::collections::H
     // Sanitize project name
     let table_name: String = project_name.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
 
-    let mut stmt = conn.prepare("SELECT language_code, language_name FROM project_languages WHERE project_name = ? ORDER BY language_code").map_err(|e| e.to_string())?;
-    let rows = stmt.query_map([table_name], |row| {
-        let mut map = std::collections::HashMap::new();
-        map.insert("code".to_string(), row.get::<_, String>(0)?);
-        map.insert("name".to_string(), row.get::<_, String>(1)?);
-        Ok(map)
-    }).map_err(|e| e.to_string())?;
+    // Get all language columns from the project table (excluding system columns)
+    let columns = get_table_columns(table_name.clone())?;
+    let language_columns: Vec<String> = columns.into_iter()
+        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "order_index" && col != "created_at")
+        .collect();
 
     let mut languages = Vec::new();
-    for row in rows {
-        languages.push(row.map_err(|e| e.to_string())?);
+    
+    // For each language column, try to get the name from project_languages table, or use the column name
+    for lang_code in language_columns {
+        let mut language_name = lang_code.clone(); // Default to column name
+        
+        // Try to get the proper name from project_languages table
+        if let Ok(name) = conn.query_row(
+            "SELECT language_name FROM project_languages WHERE project_name = ? AND language_code = ?",
+            [&table_name, &lang_code],
+            |row| row.get::<_, String>(0)
+        ) {
+            language_name = name;
+        } else {
+            // Generate a friendly name based on the column name
+            language_name = match lang_code.as_str() {
+                "en" | "eng" => "English".to_string(),
+                "it" | "ita" => "Italiano".to_string(),
+                "fr" | "fra" | "fre" => "Français".to_string(),
+                "de" | "deu" | "ger" => "Deutsch".to_string(),
+                "es" | "esp" | "spa" => "Español".to_string(),
+                _ => {
+                    // Capitalize first letter
+                    let mut chars = lang_code.chars();
+                    match chars.next() {
+                        None => lang_code.clone(),
+                        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                    }
+                }
+            };
+        }
+        
+        let mut map = std::collections::HashMap::new();
+        map.insert("code".to_string(), lang_code);
+        map.insert("name".to_string(), language_name);
+        languages.push(map);
     }
+    
+    // Sort by code
+    languages.sort_by(|a, b| a.get("code").unwrap().cmp(b.get("code").unwrap()));
+    
     Ok(languages)
 }
 
@@ -954,6 +1508,190 @@ fn open_url(url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn remove_unused_keys(project_name: String) -> Result<String, String> {
+    let db_path = "../data/projects.db";
+    fs::create_dir_all("../data").map_err(|e| e.to_string())?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Sanitize project name
+    let table_name: String = project_name.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
+
+    // Conta i record che hanno keys_project vuoto o NULL (chiavi inutilizzate)
+    let count_unused_query = format!(
+        "SELECT COUNT(*) FROM {} WHERE (keys_project IS NULL OR keys_project = '') AND (key IS NOT NULL AND key != '')", 
+        table_name
+    );
+    
+    let unused_count: i32 = conn.query_row(&count_unused_query, [], |row| {
+        Ok(row.get::<_, i32>(0)?)
+    }).map_err(|e| e.to_string())?;
+
+    if unused_count == 0 {
+        return Ok("Nessuna chiave inutilizzata trovata. Tutti i record hanno una corrispondenza nel progetto.".to_string());
+    }
+
+    // Elimina fisicamente i record che hanno keys_project vuoto o NULL
+    // Questi sono record di traduzione che non hanno più una corrispondenza nei file del progetto
+    let delete_query = format!(
+        "DELETE FROM {} WHERE (keys_project IS NULL OR keys_project = '') AND (key IS NOT NULL AND key != '')", 
+        table_name
+    );
+    
+    let deleted_rows = conn.execute(&delete_query, []).map_err(|e| e.to_string())?;
+
+    Ok(format!("Eliminate {} chiavi inutilizzate (record senza corrispondenza nel progetto).", deleted_rows))
+}
+
+#[derive(serde::Serialize)]
+struct AccentedCharacter {
+    id: i32,
+    key: String,
+    column: String,
+    original_value: String,
+    suggested_value: String,
+    row_number: i32,
+}
+
+#[tauri::command]
+fn check_accented_characters(table_name: String) -> Result<Vec<AccentedCharacter>, String> {
+    let db_path = "../data/projects.db";
+    fs::create_dir_all("../data").map_err(|e| e.to_string())?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Sanitize table name
+    let table_name: String = table_name.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
+
+    // Get all columns except system columns
+    let columns = get_table_columns(table_name.clone())?;
+    let text_columns: Vec<String> = columns.into_iter()
+        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "order_index")
+        .collect();
+
+    let mut accented_chars = Vec::new();
+    let mut row_counter = 0;
+
+    // Query all records
+    let query = format!("SELECT id, key, {} FROM {} ORDER BY id", text_columns.join(", "), table_name);
+    let mut stmt = conn.prepare(&query).map_err(|e| e.to_string())?;
+    let rows = stmt.query_map([], |row| {
+        let id: i32 = row.get("id")?;
+        let key: Option<String> = row.get("key")?;
+        
+        let mut row_data = std::collections::HashMap::new();
+        for (i, col) in text_columns.iter().enumerate() {
+            let value: Option<String> = row.get(2 + i)?; // id=0, key=1, then text columns start at 2
+            row_data.insert(col.clone(), value.unwrap_or_default());
+        }
+        
+        Ok((id, key.unwrap_or_default(), row_data))
+    }).map_err(|e| e.to_string())?;
+
+    for row_result in rows {
+        let (id, key, row_data) = row_result.map_err(|e| e.to_string())?;
+        row_counter += 1;
+
+        // Check each text column for accented characters
+        for (column, value) in row_data {
+            if !value.is_empty() && has_accented_characters(&value) {
+                let suggested = replace_accented_characters(&value);
+                accented_chars.push(AccentedCharacter {
+                    id,
+                    key: key.clone(),
+                    column: column.clone(),
+                    original_value: value,
+                    suggested_value: suggested,
+                    row_number: row_counter,
+                });
+            }
+        }
+    }
+
+    Ok(accented_chars)
+}
+
+fn has_accented_characters(text: &str) -> bool {
+    text.chars().any(|c| match c {
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'æ' |
+        'è' | 'é' | 'ê' | 'ë' |
+        'ì' | 'í' | 'î' | 'ï' |
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' |
+        'ù' | 'ú' | 'û' | 'ü' |
+        'ý' | 'ÿ' |
+        'ç' | 'ñ' |
+        'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' | 'Æ' |
+        'È' | 'É' | 'Ê' | 'Ë' |
+        'Ì' | 'Í' | 'Î' | 'Ï' |
+        'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'Ø' |
+        'Ù' | 'Ú' | 'Û' | 'Ü' |
+        'Ý' | 'Ÿ' |
+        'Ç' | 'Ñ' => true,
+        _ => false,
+    })
+}
+
+fn replace_accented_characters(text: &str) -> String {
+    text.chars().map(|c| match c {
+        // Lowercase vowels
+        'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' => "a&apos;",
+        'è' | 'é' | 'ê' | 'ë' => "e&apos;",
+        'ì' | 'í' | 'î' | 'ï' => "i&apos;",
+        'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' => "o&apos;",
+        'ù' | 'ú' | 'û' | 'ü' => "u&apos;",
+        'ý' | 'ÿ' => "y&apos;",
+        
+        // Uppercase vowels
+        'À' | 'Á' | 'Â' | 'Ã' | 'Ä' | 'Å' => "A&apos;",
+        'È' | 'É' | 'Ê' | 'Ë' => "E&apos;",
+        'Ì' | 'Í' | 'Î' | 'Ï' => "I&apos;",
+        'Ò' | 'Ó' | 'Ô' | 'Õ' | 'Ö' | 'Ø' => "O&apos;",
+        'Ù' | 'Ú' | 'Û' | 'Ü' => "U&apos;",
+        'Ý' | 'Ÿ' => "Y&apos;",
+        
+        // Special characters
+        'ç' => "c&apos;",
+        'Ç' => "C&apos;",
+        'ñ' => "n&apos;",
+        'Ñ' => "N&apos;",
+        'æ' => "ae&apos;",
+        'Æ' => "AE&apos;",
+        
+        // Regular characters remain unchanged
+        _ => {
+            let mut s = String::new();
+            s.push(c);
+            return s;
+        }
+    }.to_string()).collect::<Vec<String>>().join("")
+}
+
+#[tauri::command]
+fn fix_accented_characters(table_name: String, fixes: Vec<serde_json::Value>) -> Result<String, String> {
+    let db_path = "../data/projects.db";
+    fs::create_dir_all("../data").map_err(|e| e.to_string())?;
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Sanitize table name
+    let table_name: String = table_name.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
+
+    let mut fixed_count = 0;
+
+    for fix in fixes {
+        let id = fix.get("id").and_then(|v| v.as_i64()).ok_or("ID mancante")? as i32;
+        let column = fix.get("column").and_then(|v| v.as_str()).ok_or("Colonna mancante")?;
+        let new_value = fix.get("newValue").and_then(|v| v.as_str()).ok_or("Nuovo valore mancante")?;
+
+        // Sanitize column name
+        let column: String = column.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
+
+        let update_query = format!("UPDATE {} SET {} = ? WHERE id = ?", table_name, column);
+        conn.execute(&update_query, [new_value, &id.to_string()]).map_err(|e| e.to_string())?;
+        fixed_count += 1;
+    }
+
+    Ok(format!("Corretti {} caratteri accentati.", fixed_count))
+}
+
+#[tauri::command]
 fn get_setting(key: String) -> Result<String, String> {
     let db_path = "../data/projects.db";
     fs::create_dir_all("../data").map_err(|e| e.to_string())?;
@@ -1052,6 +1790,248 @@ fn export_cht_to_path(table_name: String, file_path: String) -> Result<String, S
     Ok(format!("File esportato con successo: {}", file_path))
 }
 
+#[tauri::command]
+fn get_export_preview(table_name: String) -> Result<serde_json::Value, String> {
+    // Retrieve project info (path)
+    let info = get_table_info(table_name.clone())?;
+    let project_path = info.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if project_path.is_empty() {
+        return Err("Percorso progetto non disponibile".to_string());
+    }
+
+    // Find .hmiprj file in project path to get the project name
+    let mut project_name = table_name.clone(); // fallback to table name
+    for entry in fs::read_dir(&project_path).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                if file_name.to_lowercase().ends_with(".hmiprj") {
+                    // Extract project name without extension
+                    if let Some(name_without_ext) = file_name.strip_suffix(".hmiprj").or_else(|| file_name.strip_suffix(".HMIPRJ")) {
+                        project_name = name_without_ext.to_string();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Get language columns
+    let columns = get_table_columns(table_name.clone())?;
+    let export_columns: Vec<String> = columns.into_iter()
+        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "order_index")
+        .collect();
+
+    // Generate export file names (deduplicated by extension)
+    let mut extensions = std::collections::HashSet::new();
+    let mut export_files = Vec::new();
+    
+    for lang in &export_columns {
+        let ext = match lang.as_str() {
+            "en" | "eng" => "eng",
+            "it" | "ita" => "ita",
+            "fr" | "fra" | "fre" => "fra",
+            "de" | "deu" | "ger" => "deu",
+            "es" | "esp" | "spa" => "esp",
+            _ => "eng",
+        };
+        
+        // Only add if we haven't seen this extension before
+        if extensions.insert(ext.to_string()) {
+            let file_name = format!("{}string.{}", project_name, ext);
+            export_files.push(file_name);
+        }
+    }
+
+    // Find files that will be backed up
+    let mut backup_files = Vec::new();
+    for entry in fs::read_dir(&project_path).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                let file_name_lower = file_name.to_lowercase();
+                
+                // Check if it's a translation file that will be backed up
+                let is_translation_file = 
+                    file_name_lower.ends_with(".eng") ||
+                    file_name_lower.ends_with(".ita") ||
+                    file_name_lower.ends_with(".fra") ||
+                    file_name_lower.ends_with(".fre") ||
+                    file_name_lower.ends_with(".deu") ||
+                    file_name_lower.ends_with(".ger") ||
+                    file_name_lower.ends_with(".esp") ||
+                    file_name_lower.ends_with(".spa") ||
+                    (file_name_lower.contains("string") && 
+                     (file_name_lower.ends_with(".xml") || file_name_lower.ends_with(".txt")));
+                
+                if is_translation_file {
+                    backup_files.push(file_name.to_string());
+                }
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "projectName": project_name,
+        "projectPath": project_path,
+        "exportFiles": export_files,
+        "backupFiles": backup_files,
+        "languageCount": extensions.len()
+    }))
+}
+
+#[tauri::command]
+fn export_translations_per_language(table_name: String) -> Result<String, String> {
+    // Retrieve project info (path)
+    let info = get_table_info(table_name.clone())?;
+    let project_path = info.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if project_path.is_empty() {
+        return Err("Percorso progetto non disponibile".to_string());
+    }
+
+    // Find .hmiprj file in project path to get the project name
+    let mut project_name = table_name.clone(); // fallback to table name
+    for entry in fs::read_dir(&project_path).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                if file_name.to_lowercase().ends_with(".hmiprj") {
+                    // Extract project name without extension
+                    if let Some(name_without_ext) = file_name.strip_suffix(".hmiprj").or_else(|| file_name.strip_suffix(".HMIPRJ")) {
+                        project_name = name_without_ext.to_string();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // Create backup folder and move existing translation-like files into it
+    let now = std::time::SystemTime::now();
+    let datetime: chrono::DateTime<chrono::Local> = now.into();
+    let timestamp = datetime.format("%Y%m%d_%H%M%S").to_string();
+    let backup_dir = Path::new(&project_path).join(format!("translation_backups_{}", timestamp));
+    fs::create_dir_all(&backup_dir).map_err(|e| e.to_string())?;
+
+    // Backup only files that match translation file patterns
+    for entry in fs::read_dir(&project_path).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        let path = entry.path();
+        if path.is_file() {
+            if let Some(file_name) = path.file_name().and_then(|s| s.to_str()) {
+                let file_name_lower = file_name.to_lowercase();
+                
+                // Backup only translation files with specific patterns:
+                // - Files ending with .eng, .ita, .fra/.fre, .deu/.ger, .esp/.spa
+                // - Files containing "string" and ending with .eng/.ita/etc (like rmc25010string.eng)
+                let is_translation_file = 
+                    file_name_lower.ends_with(".eng") ||
+                    file_name_lower.ends_with(".ita") ||
+                    file_name_lower.ends_with(".fra") ||
+                    file_name_lower.ends_with(".fre") ||
+                    file_name_lower.ends_with(".deu") ||
+                    file_name_lower.ends_with(".ger") ||
+                    file_name_lower.ends_with(".esp") ||
+                    file_name_lower.ends_with(".spa") ||
+                    (file_name_lower.contains("string") && 
+                     (file_name_lower.ends_with(".xml") || file_name_lower.ends_with(".txt")));
+                
+                if is_translation_file {
+                    let dest = backup_dir.join(file_name);
+                    // Try rename (move). If fails, fallback to copy.
+                    if let Err(_) = fs::rename(&path, &dest) {
+                        fs::copy(&path, &dest).map_err(|e| e.to_string())?;
+                    }
+                }
+            }
+        }
+    }
+
+    // Load records and determine language columns
+    let records = get_records(table_name.clone())?;
+    if records.is_empty() {
+        return Err("home.table_empty".to_string());
+    }
+
+    let columns = get_table_columns(table_name.clone())?;
+    let export_columns: Vec<String> = columns.into_iter()
+        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "order_index")
+        .collect();
+
+    // Group languages by extension to avoid duplicates
+    let mut language_groups: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    
+    for lang in &export_columns {
+        let ext = match lang.as_str() {
+            "en" | "eng" => "eng",
+            "it" | "ita" => "ita", 
+            "fr" | "fra" | "fre" => "fra",
+            "de" | "deu" | "ger" => "deu",
+            "es" | "esp" | "spa" => "esp",
+            _ => "eng",
+        };
+        language_groups.entry(ext.to_string()).or_insert_with(Vec::new).push(lang.clone());
+    }
+
+    // For each extension group, create a file with XML format
+    for (ext, langs) in &language_groups {
+        let mut content = String::new();
+        content.push_str("<?xml version=\"1.0\" encoding=\"ISO-8859-1\" ?>\n");
+        content.push_str("<strings>\n");
+        content.push_str("<list>\n");
+        
+        for record in &records {
+            if let Some(key) = record.get("key") {
+                // For each record, use the preferred language in this group
+                let mut val = String::new();
+                
+                // Create a priority order for languages in this extension group
+                let mut sorted_langs = langs.clone();
+                sorted_langs.sort_by(|a, b| {
+                    // Give priority to full language codes over short ones
+                    let a_priority = match a.as_str() {
+                        "eng" => 0, "ita" => 0, "fra" => 0, "deu" => 0, "esp" => 0,
+                        "en" => 1, "it" => 1, "fr" => 1, "de" => 1, "es" => 1,
+                        _ => 2,
+                    };
+                    let b_priority = match b.as_str() {
+                        "eng" => 0, "ita" => 0, "fra" => 0, "deu" => 0, "esp" => 0,
+                        "en" => 1, "it" => 1, "fr" => 1, "de" => 1, "es" => 1,
+                        _ => 2,
+                    };
+                    a_priority.cmp(&b_priority)
+                });
+                
+                for lang in &sorted_langs {
+                    if let Some(lang_val) = record.get(lang) {
+                        if !lang_val.is_empty() {
+                            val = lang_val.clone();
+                            break;
+                        }
+                    }
+                }
+                
+                // Escape XML entities
+                let escaped_key = key.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;");
+                let escaped_val = val.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;");
+                content.push_str(&format!("<item key=\"{}\" value=\"{}\"/>\n", escaped_key, escaped_val));
+            }
+        }
+        
+        content.push_str("</list>\n");
+        content.push_str("</strings>\n");
+
+        let file_name = format!("{}string.{}", project_name, ext);
+        let file_path = Path::new(&project_path).join(file_name);
+        fs::write(&file_path, content).map_err(|e| format!("Errore nella scrittura del file {}: {}", file_path.display(), e))?;
+    }
+
+    Ok(format!("Esportati {} file in {} (backup in {})", language_groups.len(), project_path, backup_dir.display()))
+}
+
 #[derive(Deserialize)]
 struct GamesResponse {
     data: GamesData,
@@ -1104,12 +2084,136 @@ struct Image {
     filename: String,
 }
 
+#[tauri::command]
+async fn translate_text(text: String, source_lang: String, target_lang: String) -> Result<String, String> {
+    let client = Client::new();
+    
+    // Carica le impostazioni
+    let service = get_setting("translation_service".to_string()).unwrap_or("deepl".to_string());
+    let api_key = match service.as_str() {
+        "deepl" => get_setting("deepl_api_key".to_string()),
+        "google" => get_setting("google_api_key".to_string()),
+        "microsoft" => get_setting("microsoft_api_key".to_string()),
+        _ => return Err("Servizio di traduzione non supportato".to_string()),
+    };
+    
+    let api_key = api_key.map_err(|_| "Chiave API non configurata".to_string())?;
+    let region = if service == "microsoft" {
+        Some(get_setting("microsoft_region".to_string()).unwrap_or("westeurope".to_string()))
+    } else {
+        None
+    };
+    
+    match service.as_str() {
+        "deepl" => {
+            let source_language = source_lang.to_uppercase();
+            let target_language = if target_lang.to_uppercase() == "EN" { "EN-US".to_string() } else { target_lang.to_uppercase() };
+            
+            let params = vec![
+                ("text", text.as_str()),
+                ("source_lang", &source_language),
+                ("target_lang", &target_language),
+            ];
+            
+            let response = client
+                .post("https://api-free.deepl.com/v2/translate")
+                .header("Authorization", format!("DeepL-Auth-Key {}", api_key))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .form(&params)
+                .send()
+                .await
+                .map_err(|e| format!("Errore connessione DeepL: {}", e))?;
+            
+            if !response.status().is_success() {
+                let status_code = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                return Err(format!("DeepL API Error {}: {}", status_code, error_text));
+            }
+            
+            let json: serde_json::Value = response.json().await
+                .map_err(|e| format!("Errore parsing risposta DeepL: {}", e))?;
+            
+            let translated_text = json["translations"][0]["text"]
+                .as_str()
+                .ok_or("Risposta DeepL non valida")?
+                .to_string();
+                
+            Ok(translated_text)
+        },
+        "google" => {
+            let request_body = serde_json::json!({
+                "q": text,
+                "source": source_lang,
+                "target": target_lang,
+                "format": "text"
+            });
+            
+            let response = client
+                .post(&format!("https://translation.googleapis.com/language/translate/v2?key={}", api_key))
+                .header("Content-Type", "application/json")
+                .json(&request_body)
+                .send()
+                .await
+                .map_err(|e| format!("Errore connessione Google: {}", e))?;
+            
+            if !response.status().is_success() {
+                let status_code = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                return Err(format!("Google Translate API Error {}: {}", status_code, error_text));
+            }
+            
+            let json: serde_json::Value = response.json().await
+                .map_err(|e| format!("Errore parsing risposta Google: {}", e))?;
+            
+            let translated_text = json["data"]["translations"][0]["translatedText"]
+                .as_str()
+                .ok_or("Risposta Google non valida")?
+                .to_string();
+                
+            Ok(translated_text)
+        },
+        "microsoft" => {
+            let region = region.unwrap_or_else(|| "westeurope".to_string());
+            let request_body = serde_json::json!([{
+                "text": text
+            }]);
+            
+            let response = client
+                .post(&format!("https://api.cognitive.microsofttranslator.com/translate?api-version=3.0&from={}&to={}", source_lang, target_lang))
+                .header("Ocp-Apim-Subscription-Key", api_key)
+                .header("Ocp-Apim-Subscription-Region", region)
+                .header("Content-Type", "application/json")
+                .json(&request_body)
+                .send()
+                .await
+                .map_err(|e| format!("Errore connessione Microsoft: {}", e))?;
+            
+            if !response.status().is_success() {
+                let status_code = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                return Err(format!("Microsoft Translator API Error {}: {}", status_code, error_text));
+            }
+            
+            let json: serde_json::Value = response.json().await
+                .map_err(|e| format!("Errore parsing risposta Microsoft: {}", e))?;
+            
+            let translated_text = json[0]["translations"][0]["text"]
+                .as_str()
+                .ok_or("Risposta Microsoft non valida")?
+                .to_string();
+                
+            Ok(translated_text)
+        },
+        _ => Err(format!("Servizio di traduzione non supportato: {}", service))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![import_cht, import_project_directory, get_tables, delete_table, get_records, set_table_image, delete_table_image, update_record, delete_record, insert_record, get_table_columns, get_table_info, fetch_and_set_logo, get_setting, set_setting, open_url, export_cht_to_path, update_record_order, add_language_to_project, get_project_languages, remove_language_from_project, import_translation_file, get_translation_files_in_directory, find_keys_in_project, import_project_keys])
+    .invoke_handler(tauri::generate_handler![import_cht, import_project_directory, get_tables, delete_table, get_records, set_table_image, delete_table_image, update_record, delete_record, insert_record, get_table_columns, get_table_info, fetch_and_set_logo, get_setting, set_setting, open_url, export_cht_to_path, get_export_preview, export_translations_per_language, update_record_order, add_language_to_project, get_project_languages, remove_language_from_project, import_translation_file, get_translation_files_in_directory, find_keys_in_project, import_project_keys, get_project_keys, get_project_keys_with_status, import_translation_file_from_path, get_imported_files, translate_text, remove_unused_keys, check_accented_characters, fix_accented_characters])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

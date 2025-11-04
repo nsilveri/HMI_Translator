@@ -67,7 +67,7 @@
         // Go back after success
         setTimeout(() => { window.history.back(); }, 500);
       } else {
-        toastMsg = 'Nessuna modifica.';
+        toastMsg = $_('database.no_changes');
         toastType = 'success';
       }
     } catch (e) {

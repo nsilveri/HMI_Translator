@@ -153,7 +153,7 @@ import { _ } from 'svelte-i18n';
         selectedDirectory = selected.split(/[\\/]/).pop(); // Solo il nome della directory per la UI
         directoryError = '';
         loading = true;
-        toastMsg = 'Aggiunta progetto in corso...';
+        toastMsg = $_('home.project_adding');
         toastType = 'success';
         showToast = true;
         setTimeout(() => { showToast = false; }, 2500);
