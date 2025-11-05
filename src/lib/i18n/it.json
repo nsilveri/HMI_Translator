@@ -87,13 +87,14 @@
     "error_checking_accents": "Errore controllo caratteri accentati:",
     "no_correction_selected": "Nessuna correzione selezionata.",
     "error_fixing_accents": "Errore correzione caratteri accentati:",
+    "error_deleting_language": "Errore nell'eliminazione della lingua:",
     "open_database_viewer": "Apri il visualizzatore del database per vedere e modificare i record"
   },
   "add_one": "Aggiungi uno",
   "magic_add": "Aggiunta magica",
   "settings": {
     "title": "Impostazioni",
-    "description": "Questa è la seconda pagina di esempio, con layout simile alla home.",
+    "description": "Configurazioni applicazione",
     "api_service": "Servizio API per loghi",
     "thegamesdb": "TheGamesDB",
     "rawg": "RAWG",
@@ -294,7 +295,13 @@
     "accented_chars_cancel": "Annulla",
     "accented_chars_fix": "Correggi {count} caratteri",
     "accented_chars_fixing": "Correggendo...",
-    "key_empty": "(vuota)"
+    "key_empty": "(vuota)",
+    "delete_language_modal_title": "Conferma eliminazione lingua",
+    "delete_language_modal_message": "Sei sicuro di voler eliminare la lingua <strong>\"{name}\"</strong> (<code>{code}</code>)?",
+    "delete_language_modal_warning": "Questa azione eliminerà anche tutte le traduzioni associate e non può essere annullata.",
+    "delete_language_modal_cancel": "Annulla",
+    "delete_language_modal_confirm": "Elimina lingua",
+    "delete_language_modal_deleting": "Eliminazione..."
   },
   "database": {
     "back": "Indietro",
@@ -396,6 +403,12 @@
     "save": "Salva",
     "cancel": "Annulla",
     "ok": "OK",
+    "key_column": {
+      "delete": "Elimina"
+    },
+    "lang_column": {
+      "delete": "Elimina"
+    },
     "delete": "Elimina",
     "delete_confirmation_title": "Conferma eliminazione",
     "delete_confirmation_message": "Sei sicuro di voler eliminare questo record? Questa operazione non può essere annullata."

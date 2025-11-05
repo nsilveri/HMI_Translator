@@ -1381,16 +1381,151 @@ fn remove_language_from_project(project_name: String, language_code: String) -> 
     // Sanitize project name
     let table_name: String = project_name.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
 
-    // Rimuovi la lingua dalla tabella project_languages
-    conn.execute(
-        "DELETE FROM project_languages WHERE project_name = ? AND language_code = ?",
-        params![table_name, language_code]
-    ).map_err(|e| e.to_string())?;
+    // Verifica che la tabella esista
+    let table_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?",
+        [&table_name],
+        |row| Ok(row.get::<_, i32>(0)? > 0)
+    ).unwrap_or(false);
 
-    // Nota: SQLite non supporta DROP COLUMN in modo semplice, quindi lasciamo la colonna
-    // ma la ignoriamo nell'interfaccia utente
+    if !table_exists {
+        return Err(format!("Il progetto '{}' non esiste", project_name));
+    }
 
-    Ok(format!("Lingua '{}' rimossa dal progetto '{}'", language_code, project_name))
+    // Verifica che la colonna lingua esista nella tabella del progetto
+    let mut column_exists = false;
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info(`{}`)", table_name)).map_err(|e| e.to_string())?;
+    let column_iter = stmt.query_map([], |row| {
+        let column_name: String = row.get(1)?;
+        Ok(column_name)
+    }).map_err(|e| e.to_string())?;
+
+    for column_result in column_iter {
+        if let Ok(column_name) = column_result {
+            if column_name == language_code {
+                column_exists = true;
+                break;
+            }
+        }
+    }
+
+    if !column_exists {
+        return Err(format!("La colonna lingua '{}' non esiste nella tabella del progetto '{}'", language_code, project_name));
+    }
+
+    // Verifica se la lingua è registrata in project_languages (opzionale - potrebbe non esserci)
+    let language_registered: bool = conn.query_row(
+        "SELECT COUNT(*) FROM project_languages WHERE project_name = ? AND language_code = ?",
+        params![table_name, language_code],
+        |row| Ok(row.get::<_, i32>(0)? > 0)
+    ).unwrap_or(false);
+
+    // Rimuovi la lingua dalla tabella project_languages se esiste
+    if language_registered {
+        conn.execute(
+            "DELETE FROM project_languages WHERE project_name = ? AND language_code = ?",
+            params![table_name, language_code]
+        ).map_err(|e| e.to_string())?;
+    }
+
+    // Elimina completamente la colonna dalla tabella
+    // Ottieni la struttura della tabella corrente
+    let mut columns = Vec::new();
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info(`{}`)", table_name)).map_err(|e| e.to_string())?;
+    let column_iter = stmt.query_map([], |row| {
+        let column_name: String = row.get(1)?;
+        let column_type: String = row.get(2)?;
+        let not_null: bool = row.get(3)?;
+        let default_value: Option<String> = row.get(4)?;
+        let pk: bool = row.get(5)?;
+        
+        Ok((column_name, column_type, not_null, default_value, pk))
+    }).map_err(|e| e.to_string())?;
+
+    for column_result in column_iter {
+        if let Ok((name, col_type, not_null, default_val, is_pk)) = column_result {
+            if name != language_code {  // Escludi la colonna da eliminare
+                let mut column_def = format!("`{}` {}", name, col_type);
+                
+                if not_null {
+                    column_def.push_str(" NOT NULL");
+                }
+                
+                if let Some(default) = default_val {
+                    column_def.push_str(&format!(" DEFAULT {}", default));
+                }
+                
+                if is_pk {
+                    column_def.push_str(" PRIMARY KEY");
+                }
+                
+                columns.push(column_def);
+            }
+        }
+    }
+
+    if columns.is_empty() {
+        return Err("Errore: non è possibile eliminare tutte le colonne dalla tabella".to_string());
+    }
+
+    // Inizia una transazione per sicurezza
+    conn.execute("BEGIN TRANSACTION", []).map_err(|e| e.to_string())?;
+
+    // Crea una nuova tabella temporanea senza la colonna da eliminare
+    let temp_table_name = format!("{}_temp", table_name);
+    let create_temp_sql = format!(
+        "CREATE TABLE `{}` ({})",
+        temp_table_name,
+        columns.join(", ")
+    );
+    
+    if let Err(e) = conn.execute(&create_temp_sql, []) {
+        conn.execute("ROLLBACK", []).ok();
+        return Err(format!("Errore creazione tabella temporanea: {}", e));
+    }
+
+    // Copia tutti i dati nella nuova tabella (eccetto la colonna eliminata)
+    let column_names: Vec<String> = columns.iter()
+        .map(|col| col.split_whitespace().next().unwrap_or("").trim_matches('`').to_string())
+        .collect();
+    
+    let select_columns = column_names.iter()
+        .map(|name| format!("`{}`", name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    
+    let copy_sql = format!(
+        "INSERT INTO `{}` ({}) SELECT {} FROM `{}`",
+        temp_table_name, select_columns, select_columns, table_name
+    );
+    
+    if let Err(e) = conn.execute(&copy_sql, []) {
+        conn.execute("ROLLBACK", []).ok();
+        return Err(format!("Errore copia dati: {}", e));
+    }
+
+    // Elimina la tabella originale
+    if let Err(e) = conn.execute(&format!("DROP TABLE `{}`", table_name), []) {
+        conn.execute("ROLLBACK", []).ok();
+        return Err(format!("Errore eliminazione tabella originale: {}", e));
+    }
+
+    // Rinomina la tabella temporanea
+    if let Err(e) = conn.execute(&format!("ALTER TABLE `{}` RENAME TO `{}`", temp_table_name, table_name), []) {
+        conn.execute("ROLLBACK", []).ok();
+        return Err(format!("Errore rinominazione tabella: {}", e));
+    }
+
+    // Conferma la transazione
+    conn.execute("COMMIT", []).map_err(|e| e.to_string())?;
+
+    let message = if language_registered {
+        format!("Lingua '{}' completamente eliminata dal progetto '{}' (colonna rimossa)", language_code, project_name)
+    } else {
+        format!("Lingua '{}' eliminata dal progetto '{}' (colonna rimossa - non era registrata)", language_code, project_name)
+    };
+    
+    Ok(message)
 }
 
 #[tauri::command]

@@ -203,13 +203,15 @@ import { _ } from 'svelte-i18n';
 
   <!-- HEADER CONTENT -->
   <header class="w-full pt-5 px-5 fixed top-0 left-0 right-0 z-10 bg-transparent">
-    <div class="w-full bg-white/50 backdrop-blur-sm rounded-lg border border-black/50 p-4 sm:p-2 shadow-lg flex items-center justify-between">
-      <div></div>
+    <div class="w-full bg-white/50 backdrop-blur-sm rounded-lg border border-black/50 p-4 sm:p-2 shadow-lg relative flex items-center">
+      <div class="absolute left-4 sm:left-2">
+        <!-- Spazio per eventuali elementi a sinistra -->
+      </div>
       <div class="flex-1 text-center">
         <h1 class="text-2xl font-semibold text-gray-900 mb-1">{$_('home.title')}</h1>
         <p class="text-gray-700">{$_('home.description')}</p>
       </div>
-      <div class="flex items-center gap-2 justify-end">
+      <div class="absolute right-4 sm:right-2">
         <button class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2" on:click={() => { showModal = true; }}>
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v1m6 11h1m-6 0a7 7 0 01-14 0 7 7 0 0114 0z"></path>
@@ -264,11 +266,11 @@ import { _ } from 'svelte-i18n';
 
   <!-- MAIN CONTENT -->
   <main class="flex-grow pt-5 px-5 mb-8" style=" margin-top: 6rem; margin-bottom: 2rem;">
-    <div class="w-full h-full overflow-y-auto grid gap-4 pb-20"
-      style="grid-template-columns: repeat(auto-fit, minmax({cardWidth}px, 1fr)); scrollbar-width: thin;">
+    <div class="w-full h-full overflow-y-auto flex flex-wrap gap-4 pb-20 justify-center"
+      style="scrollbar-width: thin;">
     {#each tables as table}
       <div class="bg-white/90 backdrop-blur-sm rounded-lg border border-white/20 p-2 text-center shadow-lg"
-        style="width: {cardWidth}px; min-width: {cardWidth}px; max-width: {cardWidth}px; height: {cardHeight}px;">
+        style="width: {cardWidth}px; height: {cardHeight}px;">
         <img src={table.image ? `data:image/png;base64,${table.image}` : defaultImage} alt="Immagine card"
           class="rounded-lg w-full object-cover mb-2 cursor-pointer"
           style="height: {imageHeight}px; min-height: {imageHeight}px; max-height: {imageHeight}px;"
@@ -303,9 +305,6 @@ import { _ } from 'svelte-i18n';
         <div class="mb-4 flex flex-col items-center justify-center gap-2">
           <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" on:click={selectAndSetImage}>
             {$_('home.select_image')}
-          </button>
-          <button class="bg-green-500 hover:bg-green-700 text-white font-bold py-2 px-4 rounded" on:click={fetchAndSetLogo}>
-            {$_('home.download_logo')} {apiService === 'rawg' ? 'RAWG' : 'TheGamesDB'}
           </button>
           {#if selectedTable.image}
             <button class="bg-red-500 hover:bg-red-700 text-white font-bold py-2 px-4 rounded" on:click={deleteImage}>

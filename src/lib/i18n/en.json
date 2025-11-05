@@ -87,13 +87,14 @@
     "error_checking_accents": "Error checking accented characters:",
     "no_correction_selected": "No correction selected.",
     "error_fixing_accents": "Error fixing accented characters:",
+    "error_deleting_language": "Error deleting language:",
     "open_database_viewer": "Open database viewer to see and edit records"
   },
   "add_one": "Add one",
   "magic_add": "Magic add",
   "settings": {
     "title": "Settings",
-    "description": "This is the second example page, with layout similar to home.",
+    "description": "Application configurations",
     "api_service": "API service for logos",
     "thegamesdb": "TheGamesDB",
     "rawg": "RAWG",
@@ -296,7 +297,13 @@
     "accented_chars_cancel": "Cancel",
     "accented_chars_fix": "Fix {count} characters",
     "accented_chars_fixing": "Fixing...",
-    "key_empty": "(empty)"
+    "key_empty": "(empty)",
+    "delete_language_modal_title": "Confirm language deletion",
+    "delete_language_modal_message": "Are you sure you want to delete the language <strong>\"{name}\"</strong> (<code>{code}</code>)?",
+    "delete_language_modal_warning": "This action will also delete all associated translations and cannot be undone.",
+    "delete_language_modal_cancel": "Cancel",
+    "delete_language_modal_confirm": "Delete language",
+    "delete_language_modal_deleting": "Deleting..."
   },
   "database": {
     "back": "Back",
@@ -398,6 +405,12 @@
     "save": "Save",
     "cancel": "Cancel",
     "ok": "OK",
+    "key_column": {
+      "delete": "Delete"
+    },
+    "lang_column": {
+      "delete": "Delete"
+    },
     "delete": "Delete",
     "delete_confirmation_title": "Confirm deletion",
     "delete_confirmation_message": "Are you sure you want to delete this record? This operation cannot be undone."

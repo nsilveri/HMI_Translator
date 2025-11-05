@@ -661,7 +661,7 @@
   </header>
 
   <!-- MAIN CONTENT -->
-  <main class="flex-grow pt-5 px-5 mb-8" style="margin-top: 6rem; margin-bottom: 2rem;">
+  <main class="flex-grow pt-5 px-5 mb-16" style="margin-top: 6rem; margin-bottom: 5rem;">
     
     {#if loading}
       <div class="flex justify-center items-center h-64">
@@ -765,66 +765,66 @@
           {/if}
         </div>
 
-        <!-- Contenitore scrollabile per la tabella -->
-        <div class="w-full overflow-y-auto pb-10" style="scrollbar-width: thin; margin-top: 100px; max-height: calc(100vh - 300px);">
+        <!-- Contenitore per la tabella -->
+        <div class="w-full pb-32" style="margin-top: 80px;">
           
           <!-- Tabella dei record -->
           {#if filteredRecords.length === 0 && searchTerm}
-          <!-- Messaggio nessun risultato -->
-          <div class="bg-white/80 backdrop-blur-sm rounded-lg border border-gray-300/50 shadow-lg p-8 text-center">
-            <svg class="mx-auto h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-            </svg>
-            <h3 class="mt-4 text-lg font-medium text-gray-900">{$_('database.no_results')}</h3>
-            <p class="mt-2 text-sm text-gray-500">
-              {$_('database.no_results_message', { values: { term: searchTerm } })}
-            </p>
-            <button
-              on:click={clearSearch}
-              class="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">
-              {$_('database.show_all_records')}
-            </button>
-          </div>
-        {:else}
-          <div class="bg-white/80 backdrop-blur-sm rounded-lg border border-gray-300/50 shadow-lg overflow-hidden">
-            <div class="overflow-x-auto">
-              <table class="min-w-full divide-y divide-gray-200">
-              <thead class="bg-gray-50/80">
-                <tr>
-                  {#each visibleColumns as column}
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      <div class="flex items-center justify-between">
-                        <span>
-                          {column === 'id' ? 'ID' : 
-                           column === 'key' ? $_('database.column_key') :
-                           column === 'keys_project' ? $_('database.column_project') :
-                           column === 'image_path' ? $_('database.column_image') :
-                           column === 'order' ? $_('database.column_order') :
-                           column}
-                        </span>
-                        
-                        {#if isLanguageColumn(column) && hasEmptyValues(column)}
-                          <button
-                            on:click={() => translateAllEmpty(column)}
-                            disabled={isTranslating}
-                            class="ml-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white text-xs font-bold py-1 px-2 rounded flex items-center gap-1 transition-colors"
-                            title="{$_('database.translate_all_empty', { values: { count: countEmptyValues(column), column } })}">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
-                            </svg>
-                            {isTranslating ? $_('database.translating') : $_('database.translate_all_count', { values: { count: countEmptyValues(column) } })}
-                          </button>
-                        {/if}
-                      </div>
-                    </th>
-                  {/each}
-                </tr>
-              </thead>
-              <tbody class="bg-white/60 divide-y divide-gray-200">
+            <!-- Messaggio nessun risultato -->
+            <div class="bg-white/80 backdrop-blur-sm rounded-lg border border-gray-300/50 shadow-lg p-8 text-center">
+              <svg class="mx-auto h-16 w-16 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+              </svg>
+              <h3 class="mt-4 text-lg font-medium text-gray-900">{$_('database.no_results')}</h3>
+              <p class="mt-2 text-sm text-gray-500">
+                {$_('database.no_results_message', { values: { term: searchTerm } })}
+              </p>
+              <button
+                on:click={clearSearch}
+                class="mt-4 bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">
+                {$_('database.show_all_records')}
+              </button>
+            </div>
+          {:else}
+            <div class="bg-white/80 backdrop-blur-sm rounded-lg border border-gray-300/50 shadow-lg overflow-hidden">
+              <div class="overflow-x-auto overflow-y-auto" style="scrollbar-width: thin; max-height: calc(100vh - 280px);">
+                <table class="min-w-full divide-y divide-gray-200">
+                  <thead class="bg-gray-50/80">
+                    <tr>
+                      {#each visibleColumns as column, columnIndex}
+                        <th class="py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider {columnIndex % 2 === 0 ? 'bg-gray-50/80' : 'bg-blue-100/60'} {column === 'keys_project' ? 'px-2 w-40' : 'px-6'}">
+                          <div class="flex items-center justify-between">
+                            <span>
+                              {column === 'id' ? 'ID' : 
+                               column === 'key' ? $_('database.column_key') :
+                               column === 'keys_project' ? $_('database.column_project') :
+                               column === 'image_path' ? $_('database.column_image') :
+                               column === 'order' ? $_('database.column_order') :
+                               column}
+                            </span>
+                            
+                            {#if isLanguageColumn(column) && hasEmptyValues(column)}
+                              <button
+                                on:click={() => translateAllEmpty(column)}
+                                disabled={isTranslating}
+                                class="ml-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white text-xs font-bold py-1 px-2 rounded flex items-center gap-1 transition-colors"
+                                title="{$_('database.translate_all_empty', { values: { count: countEmptyValues(column), column } })}">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
+                                </svg>
+                                {isTranslating ? $_('database.translating') : $_('database.translate_all_count', { values: { count: countEmptyValues(column) } })}
+                              </button>
+                            {/if}
+                          </div>
+                        </th>
+                      {/each}
+                    </tr>
+                  </thead>
+                  <tbody class="bg-white/60 divide-y divide-gray-200">
                 {#each filteredRecords as record, index}
                   <tr class="group hover:bg-gray-50/80 transition-colors">
-                    {#each visibleColumns as column}
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {#each visibleColumns as column, columnIndex}
+                      <td class="py-4 text-sm text-gray-900 {columnIndex % 2 === 0 ? 'bg-white/60' : 'bg-blue-50/40'} {column === 'keys_project' ? 'px-2 w-40' : 'px-6 whitespace-nowrap'}">
                         {#if column === 'keys_project'}
                           <!-- Visualizzazione speciale per la colonna keys_project -->
                           <div class="flex items-center">
@@ -837,7 +837,7 @@
                               </div>
                             {:else if record[column] && !record['key']}
                               <!-- Chiave presente nel progetto ma non tradotta -->
-                              <div class="max-w-xs truncate text-orange-600 font-medium" title={record[column] || ''}>
+                              <div class="max-w-48 truncate text-orange-600 font-medium" title={record[column] || ''}>
                                 {#if searchTerm && record[column].toString().toLowerCase().includes(searchTerm.toLowerCase())}
                                   {@html record[column].toString().replace(new RegExp(`(${searchTerm})`, 'gi'), '<mark class="bg-yellow-200 px-1 rounded">$1</mark>')}
                                 {:else}
@@ -865,7 +865,7 @@
                                   </svg>
                                   {$_('database.not_present_in_translation')}
                                 </div>
-                                <div class="flex items-center gap-1">
+                                <div class="flex items-center justify-end gap-1">
                                   <button
                                     on:click={() => addKeyToTranslations(record.id, record['keys_project'])}
                                     class="bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1 px-2 rounded flex items-center gap-1"
@@ -879,7 +879,7 @@
                                     on:click={() => confirmDeleteRecord(record.id)}
                                     class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded"
                                     title="{$_('database.delete_record')}">
-                                    {$_('database.delete')}
+                                    {$_('database.key_column.delete')}
                                   </button>
                                 </div>
                               </div>
@@ -891,12 +891,14 @@
                               <!-- Record completamente vuoto -->
                               <div class="flex items-center justify-between">
                                 <span class="text-gray-400">{$_('database.empty_record')}</span>
-                                <button
-                                  on:click={() => confirmDeleteRecord(record.id)}
-                                  class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded"
-                                  title="{$_('database.delete_empty_record')}">
-                                  {$_('database.delete_empty_record')}
-                                </button>
+                                <div class="flex justify-end">
+                                  <button
+                                    on:click={() => confirmDeleteRecord(record.id)}
+                                    class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded"
+                                    title="{$_('database.delete_empty_record')}">
+                                    {$_('database.delete_empty_record')}
+                                  </button>
+                                </div>
                               </div>
                             {:else}
                               <div class="flex items-center justify-between">
@@ -904,12 +906,14 @@
                                   {record[column] || '—'}
                                 </div>
                                 {#if record[column]}
-                                  <button
-                                    on:click={() => confirmDeleteRecord(record.id)}
-                                    class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded ml-2"
-                                    title="{$_('database.delete_record')}">
-                                    {$_('database.delete')}
-                                  </button>
+                                  <div class="flex justify-end">
+                                    <button
+                                      on:click={() => confirmDeleteRecord(record.id)}
+                                      class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded"
+                                      title="{$_('database.delete_record')}">
+                                      {$_('database.key_column.delete')}
+                                    </button>
+                                  </div>
                                 {/if}
                               </div>
                             {/if}
@@ -939,7 +943,7 @@
                                     </button>
                                   </div>
                                 {:else}
-                                  <div class="flex items-center justify-between gap-2">
+                                  <div class="flex items-center gap-2">
                                     <div class="truncate flex-1">
                                       {#if searchTerm && record[column].toString().toLowerCase().includes(searchTerm.toLowerCase())}
                                         {@html record[column].toString().replace(new RegExp(`(${searchTerm})`, 'gi'), '<mark class="bg-yellow-200 px-1 rounded">$1</mark>')}
@@ -947,7 +951,7 @@
                                         {record[column]}
                                       {/if}
                                     </div>
-                                    <div class="flex items-center gap-1">
+                                    <div class="flex items-center justify-end gap-1 flex-shrink-0">
                                       <button
                                         on:click={() => startEdit(record.id, column, record[column] || '')}
                                         class="bg-yellow-400 hover:bg-yellow-500 text-white text-xs font-bold py-1 px-2 rounded"
@@ -956,11 +960,12 @@
                                       </button>
                                       <button
                                         on:click={() => clearLanguageValue(record.id, column)}
-                                        class="opacity-0 group-hover:opacity-100 hover:bg-red-100 text-red-500 hover:text-red-700 py-2 px-3 rounded transition-all duration-200 flex-shrink-0"
+                                        class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded flex-shrink-0 flex items-center gap-1"
                                         title="{$_('database.delete_value')}">
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                                         </svg>
+                                        <!--{$_('database.lang_column.delete')} -->
                                       </button>
                                     </div>
                                   </div>
@@ -986,7 +991,7 @@
                                   </div>
                                 {:else}
                                   {@const action = getTranslationAction(record, column)}
-                                  <div class="flex items-center gap-2">
+                                  <div class="flex items-center justify-end gap-2">
                                     {#if action && action.type === 'translate'}
                                       <button
                                         on:click={action.action}
@@ -1042,13 +1047,12 @@
                     {/each}
                   </tr>
                 {/each}
-              </tbody>
-            </table>
-          </div>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          {/if}
         </div>
-        {/if}
-        
-        </div> <!-- Chiusura contenitore scrollabile -->
       {/if}
   </main>
 

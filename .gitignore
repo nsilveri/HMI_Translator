@@ -26,3 +26,5 @@ import_cht_to_sqlite.py
 scripts/extract-icon.ps1
 
 data/database.db
+
+*.code-workspace

@@ -28,6 +28,15 @@
   let showAccentedCharsModal = false;
   let accentedCharacters = [];
   let selectedFixes = [];
+  let selectedLanguages = [];
+  let maxVisibleLanguages = 3;
+  let showDeleteLanguageModal = false;
+  let languageToDelete = null;
+  
+  // Computed property per le lingue da visualizzare
+  $: visibleLanguages = selectedLanguages.length > 0 
+    ? languages.filter(lang => selectedLanguages.includes(lang.code))
+    : languages.slice(0, maxVisibleLanguages);
   
   // Card display settings (simili alla home)
   let cardWidth = 180; // px
@@ -139,6 +148,18 @@
     showAddLanguageModal = false;
     newLanguageCode = '';
     newLanguageName = '';
+  }
+
+  function toggleLanguageSelection(languageCode) {
+    if (selectedLanguages.includes(languageCode)) {
+      selectedLanguages = selectedLanguages.filter(code => code !== languageCode);
+    } else if (selectedLanguages.length < maxVisibleLanguages) {
+      selectedLanguages = [...selectedLanguages, languageCode];
+    }
+  }
+
+  function isLanguageSelected(languageCode) {
+    return selectedLanguages.includes(languageCode);
   }
 
   const importTranslationFile = async () => {
@@ -579,6 +600,54 @@
   function toggleFix(index) {
     selectedFixes[index].selected = !selectedFixes[index].selected;
   }
+
+  function confirmDeleteLanguage(languageCode, languageName) {
+    languageToDelete = { code: languageCode, name: languageName };
+    showDeleteLanguageModal = true;
+  }
+
+  async function deleteLanguage() {
+    if (!languageToDelete) return;
+
+    loading = true;
+    try {
+      console.log('Tentativo eliminazione lingua:', {
+        projectName: tableName,
+        languageCode: languageToDelete.code,
+        languageName: languageToDelete.name
+      });
+      
+      const result = await invoke('remove_language_from_project', { 
+        projectName: tableName, 
+        languageCode: languageToDelete.code 
+      });
+      
+      toastMsg = result || `Lingua ${languageToDelete.name} eliminata con successo`;
+      toastType = 'success';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 3000);
+      
+      // Ricarica i dati del progetto
+      await loadProjectData();
+      
+      // Chiudi il modal
+      showDeleteLanguageModal = false;
+      languageToDelete = null;
+    } catch (e) {
+      console.error('Errore eliminazione lingua:', e);
+      console.log('Lingue attualmente caricate:', languages);
+      toastMsg = $_('home.error_deleting_language') + ' ' + e;
+      toastType = 'error';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 3000);
+    }
+    loading = false;
+  }
+
+  function cancelDeleteLanguage() {
+    showDeleteLanguageModal = false;
+    languageToDelete = null;
+  }
 </script>
 
 <div class="min-h-screen flex flex-col" style="background: linear-gradient(135deg, #c9ffe7 0%, #e9e9ff 70%, #dcecff 100%);">
@@ -730,8 +799,8 @@
           <!-- Linea separatrice sopra -->
           <div class="w-full h-px bg-gradient-to-r from-transparent via-black to-transparent mb-6"></div>
           
-          <!-- Griglia responsive: 1 colonna su mobile, 2 su tablet, 3 su desktop -->
-          <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 justify-items-center">
+          <!-- Layout responsive con separatori verticali -->
+          <div class="flex flex-col xl:flex-row items-center justify-center gap-6">
             
             <!-- Sezione Database del progetto -->
             {#if recordsCount > 0}
@@ -785,6 +854,14 @@
               </div>
             {/if}
             
+            <!-- Separatore 1: orizzontale su mobile, verticale su desktop -->
+            {#if recordsCount > 0 && (languages.length > 0 || projectKeys.length > 0)}
+              <!-- Linea orizzontale su schermi piccoli -->
+              <div class="xl:hidden w-full h-px bg-gradient-to-r from-transparent via-black to-transparent my-4"></div>
+              <!-- Linea verticale su schermi grandi -->
+              <div class="hidden xl:block w-px h-64 bg-gradient-to-b from-transparent via-black to-transparent"></div>
+            {/if}
+            
             <!-- Sezione Lingue configurate -->
             {#if languages.length > 0}
               <div class="w-full max-w-sm">
@@ -796,13 +873,13 @@
                 </h3>
                 <p class="text-sm text-gray-600 text-center mb-4">
                   {$_('project.languages_description', { values: { count: languages.length, plural: languages.length === 1 ? $_('project.language_configured') : $_('project.languages_configured') } })}
-                </p>
+                </p>               
                 
-                <!-- Container scorribile per tutte le lingue -->
-                <div class="max-h-80 overflow-y-auto" style="scrollbar-width: thin;">
+                <!-- Container scorribile: mostra 3 lingue alla volta -->
+                <div class="overflow-y-auto" style="scrollbar-width: thin; height: 192px; max-height: 192px;">
                   <div class="flex flex-col gap-2 pr-1">
                     {#each languages as language}
-                      <div class="bg-green-100/90 backdrop-blur-sm rounded-lg border border-green-300/50 p-2 text-center shadow-lg flex items-center gap-3">
+                      <div class="bg-green-100/90 backdrop-blur-sm rounded-lg border border-green-300/50 p-2 text-center shadow-lg flex items-center gap-3 group hover:bg-green-200/90 transition-colors" style="min-height: 56px;">
                         <div class="w-8 h-8 bg-green-200 rounded flex items-center justify-center flex-shrink-0">
                           <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
@@ -812,21 +889,32 @@
                           <h4 class="text-sm font-semibold text-green-800 truncate">{language.name}</h4>
                           <p class="text-xs text-green-600">({language.code})</p>
                         </div>
-                        <div class="flex gap-1 flex-shrink-0">
-                          <a href="/home/table/translations?table={encodeURIComponent(tableName)}&lang={encodeURIComponent(language.code)}" 
-                             class="bg-green-500 hover:bg-green-700 text-white font-bold py-1 px-2 rounded text-xs flex items-center gap-1"
-                             title="Traduci in {language.name}">
+                        <!-- Pulsante Elimina - visibile al hover -->
+                        <div class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            on:click={() => confirmDeleteLanguage(language.code, language.name)}
+                            disabled={loading}
+                            class="bg-red-500 hover:bg-red-600 disabled:bg-gray-400 text-white p-1 rounded text-xs flex items-center gap-1 transition-colors"
+                            title="Elimina lingua {language.name}">
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                             </svg>
-                          </a>
+                            Elimina
+                          </button>
                         </div>
                       </div>
                     {/each}
                   </div>
                 </div>
               </div>
+            {/if}
+            
+            <!-- Separatore 2: orizzontale su mobile, verticale su desktop -->
+            {#if languages.length > 0 && projectKeys.length > 0}
+              <!-- Linea orizzontale su schermi piccoli -->
+              <div class="xl:hidden w-full h-px bg-gradient-to-r from-transparent via-black to-transparent my-4"></div>
+              <!-- Linea verticale su schermi grandi -->
+              <div class="hidden xl:block w-px h-64 bg-gradient-to-b from-transparent via-black to-transparent"></div>
             {/if}
             
             <!-- Sezione Chiavi del progetto -->
@@ -1349,6 +1437,44 @@
               </button>
             </div>
           {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Modal di conferma eliminazione lingua -->
+  {#if showDeleteLanguageModal && languageToDelete}
+    <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+      <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div class="p-6">
+          <div class="flex items-center mb-4">
+            <svg class="w-6 h-6 text-red-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z"></path>
+            </svg>
+            <h3 class="text-lg font-semibold text-gray-900">{$_('project.delete_language_modal_title')}</h3>
+          </div>
+          <p class="text-gray-600 mb-6">
+            {@html $_('project.delete_language_modal_message', { values: { name: languageToDelete.name, code: languageToDelete.code } })}
+            <br><br>
+            <span class="text-red-600 font-medium">{$_('project.delete_language_modal_warning')}</span>
+          </p>
+          <div class="flex justify-end gap-3">
+            <button
+              on:click={cancelDeleteLanguage}
+              disabled={loading}
+              class="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white font-bold py-2 px-4 rounded">
+              {$_('project.delete_language_modal_cancel')}
+            </button>
+            <button
+              on:click={deleteLanguage}
+              disabled={loading}
+              class="bg-red-500 hover:bg-red-600 disabled:bg-gray-400 text-white font-bold py-2 px-4 rounded flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+              </svg>
+              {loading ? $_('project.delete_language_modal_deleting') : $_('project.delete_language_modal_confirm')}
+            </button>
+          </div>
         </div>
       </div>
     </div>
