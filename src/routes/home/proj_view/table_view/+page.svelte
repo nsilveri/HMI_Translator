@@ -789,7 +789,7 @@
             <div class="bg-white/80 backdrop-blur-sm rounded-lg border border-gray-300/50 shadow-lg overflow-hidden">
               <div class="overflow-x-auto overflow-y-auto" style="scrollbar-width: thin; max-height: calc(100vh - 280px);">
                 <table class="min-w-full divide-y divide-gray-200">
-                  <thead class="bg-gray-50/80">
+                  <thead class="sticky top-0 z-20 bg-gray-50/80 backdrop-blur-sm">
                     <tr>
                       {#each visibleColumns as column, columnIndex}
                         <th class="py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider {columnIndex % 2 === 0 ? 'bg-gray-50/80' : 'bg-blue-100/60'} {column === 'keys_project' ? 'px-2 w-40' : 'px-6'}">

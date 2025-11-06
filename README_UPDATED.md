@@ -43,7 +43,7 @@ Qui sotto trovi un riepilogo esteso delle modifiche recenti (frontend e backend)
 ### Modifiche principali
 
 - Unico pulsante `Add` con menu a tendina: contiene `Add one` (form singolo) e `Magic add` (modal bulk).
-- Modal "Bulk add" con parsing intelligente (`src/routes/home/table/+page.svelte`): supporta diversi formati incollati (coppie etichettate `desc:`/`code:`, blocchi separati da righe vuote, righe singole con `desc code` o righe alternate). È pensato per semplificare l'import rapido di molti cheat.
+- Modal "Bulk add" con parsing intelligente (`src/routes/home/proj_view/+page.svelte`): supporta diversi formati incollati (coppie etichettate `desc:`/`code:`, blocchi separati da righe vuote, righe singole con `desc code` o righe alternate). È pensato per semplificare l'import rapido di molti cheat.
 - Migrazione a identificatori stabili: le liste usano ora `id` come chiave Svelte per evitare duplicazioni/doppi elementi in DOM.
 - Drag & drop robusto: integrazione con SortableJS (handle, fallbackOnBody, ghost/chosen classes) e salvataggio ordine tramite `update_record_order` che invia array di `id` al backend.
 - Selezione riga + controlli header Up/Down: seleziona una riga singola e spostala con le frecce nella testata; viene mostrato un toast di avviso se nulla è selezionato.

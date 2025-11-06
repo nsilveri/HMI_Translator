@@ -43,7 +43,7 @@ Below is an extended summary of recent modifications (frontend and backend), tes
 ### Key changes
 
 - Single `Add` button with dropdown: contains `Add one` (single form) and `Magic add` (bulk modal).
-- "Bulk add" modal with smart parsing (`src/routes/home/table/+page.svelte`): supports several pasted formats (labelled pairs `desc:`/`code:`, blank-line separated blocks, single-line `desc code`, or alternating lines). It's designed to simplify fast imports of many cheats.
+- "Bulk add" modal with smart parsing (`src/routes/home/proj_view/+page.svelte`): supports several pasted formats (labelled pairs `desc:`/`code:`, blank-line separated blocks, single-line `desc code`, or alternating lines). It's designed to simplify fast imports of many cheats.
 - Migration to stable identifiers: lists now use `id` as the Svelte key to avoid duplicate/duplicate DOM elements.
 - Robust drag & drop: integration with SortableJS (handle, fallbackOnBody, ghost/chosen classes) and order saving via `update_record_order` that sends an array of `id`s to the backend.
 - Row selection + header Up/Down controls: select a single row and move it with header arrows; a toast appears if nothing is selected.

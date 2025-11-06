@@ -1,0 +1,26 @@
+# Ignora le immagini di input temporanee
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.ico
+*.icns
+
+# Ignora cartelle temporanee
+temp/
+__pycache__/
+*.pyc
+*.pyo
+
+# Ignora file di log
+*.log
+
+# Ignora le dipendenze Python locali (da reinstallare con setup.py)
+libs/
+!libs/.gitkeep
+
+# File di test opzionali
+test.py
+test_quality.py
+test_*.png

@@ -274,7 +274,7 @@
   
   function openDatabaseViewer() {
     // Naviga alla pagina di visualizzazione del database
-    window.location.href = `/home/table/view?table=${encodeURIComponent(tableName)}`;
+    window.location.href = `/home/proj_view/table_view?table=${encodeURIComponent(tableName)}`;
   }
 
   async function exportTranslations() {

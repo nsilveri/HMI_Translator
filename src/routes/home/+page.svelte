@@ -280,7 +280,7 @@ import { _ } from 'svelte-i18n';
           on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openImageModal(table); } }} />
         <h2 class="text-base font-semibold text-gray-900 mb-2 truncate">{table.name}</h2>
         <div class="flex justify-center gap-2">
-          <a href="/home/table?table={encodeURIComponent(table.name)}" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded text-xs flex items-center gap-1">
+          <a href="/home/proj_view?table={encodeURIComponent(table.name)}" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded text-xs flex items-center gap-1">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
