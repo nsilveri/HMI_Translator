@@ -274,7 +274,7 @@
   
   function openDatabaseViewer() {
     // Naviga alla pagina di visualizzazione del database
-    window.location.href = `/home/proj_view/table_view?table=${encodeURIComponent(tableName)}`;
+    window.location.href = `/home/table/view?table=${encodeURIComponent(tableName)}`;
   }
 
   async function exportTranslations() {
@@ -1054,69 +1054,61 @@
           {#if foundKeys.length === 0}
             <p class="text-gray-500 text-center py-8">{$_('project.keys_modal_no_keys')}</p>
           {:else}
-            {@const groupedByKey = foundKeys.reduce((groups, keyInfo) => {
-              const keyName = keyInfo.key;
-              if (!groups[keyName]) {
-                groups[keyName] = {
-                  key: keyName,
-                  files: [],
-                  allFiles: keyInfo.all_files || [keyInfo.file], // Usa il nuovo campo all_files
-                  fullLine: keyInfo.full_line
-                };
+            {@const groupedKeys = foundKeys.reduce((groups, keyInfo) => {
+              const fileName = keyInfo.file;
+              if (!groups[fileName]) {
+                groups[fileName] = [];
               }
-              // Aggiungi il file corrente se non è già presente
-              if (!groups[keyName].files.find(f => f.file === keyInfo.file)) {
-                groups[keyName].files.push({
-                  file: keyInfo.file,
-                  fullLine: keyInfo.full_line
-                });
-              }
+              groups[fileName].push(keyInfo);
               return groups;
             }, {})}
             
             <div class="space-y-4">
-              {#each Object.values(groupedByKey) as keyGroup, keyIndex}
+              {#each Object.entries(groupedKeys) as [fileName, fileKeys]}
                 <div class="bg-white rounded-lg border border-gray-300 shadow-sm overflow-hidden">
-                  <!-- Header della chiave -->
-                  <div class="bg-green-50 px-4 py-3 border-b border-green-200">
+                  <!-- Header del file -->
+                  <div class="bg-blue-50 px-4 py-3 border-b border-blue-200">
                     <div class="flex items-center justify-between">
                       <div class="flex items-center gap-2">
-                        <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m0 0a2 2 0 012 2 2 2 0 01-2 2m-2-2h.01M5 18h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                         </svg>
-                        <span class="text-lg font-semibold text-green-800 font-mono">{keyGroup.key}</span>
+                        <span class="text-lg font-semibold text-blue-800">{fileName}</span>
                       </div>
-                      <div class="text-sm text-green-600 bg-green-100 px-3 py-1 rounded-full">
-                        {keyGroup.allFiles.length} {$_('project.keys_modal_files_count', { values: { count: keyGroup.allFiles.length } })}
+                      <div class="text-sm text-blue-600 bg-blue-100 px-3 py-1 rounded-full">
+                        {fileKeys.length} {$_('project.keys_modal_files_count', { values: { count: fileKeys.length } })}
                       </div>
                     </div>
                   </div>
                   
-                  <!-- Lista dei file che contengono questa chiave -->
+                  <!-- Lista delle chiavi del file -->
                   <div class="px-4 py-3 max-h-64 overflow-y-auto">
-                    <div class="space-y-3">
-                      <!-- Mostra tutti i file dove appare la chiave -->
-                      <div class="mb-3">
-                        <div class="text-xs font-medium text-gray-600 mb-2">{$_('project.keys_modal_found_in_files')}:</div>
-                        <div class="flex flex-wrap gap-1">
-                          {#each keyGroup.allFiles as fileName}
-                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                              <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                              </svg>
-                              {fileName}
-                            </span>
-                          {/each}
+                    <div class="space-y-2">
+                      {#each fileKeys as keyInfo, index}
+                        <div class="p-3 bg-gray-50 rounded border border-gray-200">
+                          <div class="flex items-start justify-between mb-2">
+                            <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                              {$_('project.keys_modal_key_number', { values: { number: index + 1 } })}
+                            </div>
+                          </div>
+                          
+                          <!-- Chiave estratta -->
+                          <div class="mb-2">
+                            <div class="text-xs font-medium text-gray-600 mb-1">{$_('project.keys_modal_extracted_key')}:</div>
+                            <div class="p-2 bg-green-50 rounded border border-green-200">
+                              <span class="font-mono text-sm text-green-800 break-words">{keyInfo.key}</span>
+                            </div>
+                          </div>
+                          
+                          <!-- Riga completa (troncata) -->
+                          <div>
+                            <div class="text-xs font-medium text-gray-600 mb-1">{$_('project.keys_modal_file_line')}:</div>
+                            <div class="p-2 bg-gray-100 rounded border border-gray-200 max-h-16 overflow-y-auto">
+                              <span class="font-mono text-xs text-gray-700 break-all">{keyInfo.full_line}</span>
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                      
-                      <!-- Esempio di riga dal primo file -->
-                      <div>
-                        <div class="text-xs font-medium text-gray-600 mb-1">{$_('project.keys_modal_example_line')}:</div>
-                        <div class="p-2 bg-gray-100 rounded border border-gray-200 max-h-16 overflow-y-auto">
-                          <span class="font-mono text-xs text-gray-700 break-all">{keyGroup.fullLine}</span>
-                        </div>
-                      </div>
+                      {/each}
                     </div>
                   </div>
                 </div>

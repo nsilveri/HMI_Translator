@@ -457,6 +457,7 @@ struct KeyWithFile {
     key: String,
     file: String,
     full_line: String,
+    all_files: Vec<String>, // JSON array di tutti i file dove appare questa chiave
 }
 
 #[tauri::command]
@@ -564,6 +565,7 @@ fn find_keys_in_project(directory_path: String, project_name: String) -> Result<
                                             key: key_str.to_string(),
                                             file: name.to_string(),
                                             full_line: line.trim().to_string(),
+                                            all_files: vec![name.to_string()], // Inizialmente solo questo file
                                         });
                                         local_count += 1;
                                     }
@@ -585,10 +587,37 @@ fn find_keys_in_project(directory_path: String, project_name: String) -> Result<
         scan_directory(&folder_path, &mut found_keys)?;
     }
     
-    // Ordina per chiave
-    found_keys.sort_by(|a, b| a.key.cmp(&b.key));
+    // Raggruppa le chiavi duplicate raccogliendo tutti i file dove appaiono
+    use std::collections::HashMap;
+    let mut key_map: HashMap<String, (String, String, Vec<String>)> = HashMap::new();
     
-    Ok(found_keys)
+    for key_entry in found_keys {
+        let entry = key_map.entry(key_entry.key.clone()).or_insert((
+            key_entry.file.clone(),
+            key_entry.full_line.clone(),
+            Vec::new()
+        ));
+        
+        // Aggiungi il file alla lista se non è già presente
+        if !entry.2.contains(&key_entry.file) {
+            entry.2.push(key_entry.file);
+        }
+    }
+    
+    // Converti la HashMap in Vec<KeyWithFile>
+    let mut result: Vec<KeyWithFile> = key_map.into_iter().map(|(key, (file, full_line, all_files))| {
+        KeyWithFile {
+            key,
+            file, // File primario (primo trovato) 
+            full_line,
+            all_files,
+        }
+    }).collect();
+    
+    // Ordina per chiave
+    result.sort_by(|a, b| a.key.cmp(&b.key));
+    
+    Ok(result)
 }
 
 #[tauri::command]
@@ -615,6 +644,26 @@ fn import_project_keys(project_name: String, keys: Vec<KeyWithFile>) -> Result<S
         );
         conn.execute(&add_column_sql, []).map_err(|e| e.to_string())?;
         println!("Aggiunta colonna keys_project alla tabella {}", project_name);
+    }
+    
+    // Verifica se esiste la colonna key_files per memorizzare i file JSON
+    let check_files_column_sql = format!(
+        "SELECT COUNT(*) as count FROM pragma_table_info('{}') WHERE name='key_files'",
+        project_name
+    );
+    
+    let files_column_exists: i32 = conn.query_row(&check_files_column_sql, [], |row| {
+        Ok(row.get::<_, i32>("count")?)
+    }).unwrap_or(0);
+    
+    if files_column_exists == 0 {
+        // Aggiungi la colonna key_files se non esiste
+        let add_files_column_sql = format!(
+            "ALTER TABLE `{}` ADD COLUMN key_files TEXT",
+            project_name
+        );
+        conn.execute(&add_files_column_sql, []).map_err(|e| e.to_string())?;
+        println!("Aggiunta colonna key_files alla tabella {}", project_name);
     }
     
     // Verifica se la colonna key ha constraint NOT NULL e lo rimuove se necessario
@@ -724,24 +773,32 @@ fn import_project_keys(project_name: String, keys: Vec<KeyWithFile>) -> Result<S
             let exists_in_keys_project = conn.query_row(&check_keys_project_sql, [&key_info.key], |_| Ok(())).is_ok();
             
             if !exists_in_keys_project {
-                // Esiste nella colonna key ma non in keys_project, aggiorna
+                // Esiste nella colonna key ma non in keys_project, aggiorna con i file
+                let files_json = serde_json::to_string(&key_info.all_files).unwrap_or_else(|_| "[]".to_string());
                 let update_sql = format!(
-                    "UPDATE `{}` SET keys_project = ? WHERE key = ?",
+                    "UPDATE `{}` SET keys_project = ?, key_files = ? WHERE key = ?",
                     project_name
                 );
-                conn.execute(&update_sql, [&key_info.key, &key_info.key]).map_err(|e| e.to_string())?;
+                conn.execute(&update_sql, [&key_info.key, &files_json, &key_info.key]).map_err(|e| e.to_string())?;
                 updated_count += 1;
             } else {
-                // Esiste già in keys_project, salta l'importazione
+                // Esiste già in keys_project, aggiorna solo i file se necessario
+                let files_json = serde_json::to_string(&key_info.all_files).unwrap_or_else(|_| "[]".to_string());
+                let update_files_sql = format!(
+                    "UPDATE `{}` SET key_files = ? WHERE keys_project = ?",
+                    project_name
+                );
+                conn.execute(&update_files_sql, [&files_json, &key_info.key]).map_err(|e| e.to_string())?;
                 skipped_count += 1;
             }
         } else {
-            // La chiave non esiste da nessuna parte, inserisci nuova riga
+            // La chiave non esiste da nessuna parte, inserisci nuova riga con i file JSON
+            let files_json = serde_json::to_string(&key_info.all_files).unwrap_or_else(|_| "[]".to_string());
             let insert_sql = format!(
-                "INSERT INTO `{}` (keys_project) VALUES (?)",
+                "INSERT INTO `{}` (keys_project, key_files) VALUES (?, ?)",
                 project_name
             );
-            conn.execute(&insert_sql, [&key_info.key]).map_err(|e| e.to_string())?;
+            conn.execute(&insert_sql, [&key_info.key, &files_json]).map_err(|e| e.to_string())?;
             imported_count += 1;
         }
     }
@@ -1242,7 +1299,7 @@ fn get_project_languages(project_name: String) -> Result<Vec<std::collections::H
     // Get all language columns from the project table (excluding system columns)
     let columns = get_table_columns(table_name.clone())?;
     let language_columns: Vec<String> = columns.into_iter()
-        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "order_index" && col != "created_at")
+        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "key_files" && col != "order_index" && col != "created_at")
         .collect();
 
     let mut languages = Vec::new();
@@ -1700,7 +1757,7 @@ fn check_accented_characters(table_name: String) -> Result<Vec<AccentedCharacter
     // Get all columns except system columns
     let columns = get_table_columns(table_name.clone())?;
     let text_columns: Vec<String> = columns.into_iter()
-        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "order_index")
+        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "key_files" && col != "order_index")
         .collect();
 
     let mut accented_chars = Vec::new();
@@ -1960,7 +2017,7 @@ fn get_export_preview(table_name: String) -> Result<serde_json::Value, String> {
     // Get language columns
     let columns = get_table_columns(table_name.clone())?;
     let export_columns: Vec<String> = columns.into_iter()
-        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "order_index")
+        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "key_files" && col != "order_index")
         .collect();
 
     // Generate export file names (deduplicated by extension)
@@ -2102,7 +2159,7 @@ fn export_translations_per_language(table_name: String) -> Result<String, String
 
     let columns = get_table_columns(table_name.clone())?;
     let export_columns: Vec<String> = columns.into_iter()
-        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "order_index")
+        .filter(|col| col != "id" && col != "image" && col != "key" && col != "keys_project" && col != "key_files" && col != "order_index")
         .collect();
 
     // Group languages by extension to avoid duplicates

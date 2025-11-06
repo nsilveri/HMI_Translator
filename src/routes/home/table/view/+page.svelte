@@ -25,12 +25,6 @@
   // Delete confirmation state
   let showDeleteModal = false;
   let recordToDelete = null;
-  // Files popup state
-  let showFilesPopup = false;
-  let popupFiles = [];
-  // Page filter state
-  let selectedPageFilter = 'all';
-  let availablePages = [];
 
   onMount(async () => {
     const urlParams = $page.url.searchParams;
@@ -75,18 +69,17 @@
     const hiddenColumns = ['created_at', 'updated_at', 'timestamp', 'created', 'updated'];
     const filteredColumns = columns.filter(col => !hiddenColumns.includes(col.toLowerCase()));
     
-    // Riordina le colonne con "keys_project" come terza colonna e "key_files" come quarta
+    // Riordina le colonne con "keys_project" come terza colonna
     const orderedColumns = [];
     
     // Prima le colonne prioritarie nell'ordine desiderato
     if (filteredColumns.includes('id')) orderedColumns.push('id');
     if (filteredColumns.includes('key')) orderedColumns.push('key');
     if (filteredColumns.includes('keys_project')) orderedColumns.push('keys_project');
-    if (filteredColumns.includes('key_files')) orderedColumns.push('key_files');
     
     // Poi tutte le altre colonne (escludendo quelle già aggiunte)
     filteredColumns.forEach(col => {
-      if (!['id', 'key', 'keys_project', 'key_files'].includes(col)) {
+      if (!['id', 'key', 'keys_project'].includes(col)) {
         orderedColumns.push(col);
       }
     });
@@ -94,59 +87,23 @@
     return orderedColumns;
   }
 
-  // Filtra i record in base al termine di ricerca e al filtro pagina
-  function filterRecords(records, searchTerm, pageFilter) {
-    let filtered = records;
-    
-    // Filtro per pagina
-    if (pageFilter && pageFilter !== 'all') {
-      filtered = filtered.filter(record => {
-        const keyFiles = parseKeyFiles(record['key_files'] || '');
-        return keyFiles.some(fileName => {
-          const fileNameWithoutExt = fileName.includes('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
-          return fileNameWithoutExt === pageFilter;
-        });
-      });
+  // Filtra i record in base al termine di ricerca
+  function filterRecords(records, searchTerm) {
+    if (!searchTerm.trim()) {
+      return records;
     }
     
-    // Filtro per termine di ricerca
-    if (searchTerm && searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(record => {
-        return getVisibleColumns(columns).some(column => {
-          const value = record[column];
-          return value && value.toString().toLowerCase().includes(term);
-        });
+    const term = searchTerm.toLowerCase();
+    return records.filter(record => {
+      return getVisibleColumns(columns).some(column => {
+        const value = record[column];
+        return value && value.toString().toLowerCase().includes(term);
       });
-    }
-    
-    return filtered;
-  }
-
-  // Estrae le pagine disponibili dai record
-  function extractAvailablePages(records) {
-    const pagesSet = new Set(['all']); // Sempre includi "Tutte"
-    
-    records.forEach(record => {
-      const keyFiles = parseKeyFiles(record['key_files'] || '');
-      keyFiles.forEach(fileName => {
-        const fileNameWithoutExt = fileName.includes('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
-        if (fileNameWithoutExt) {
-          pagesSet.add(fileNameWithoutExt);
-        }
-      });
-    });
-    
-    return Array.from(pagesSet).sort((a, b) => {
-      if (a === 'all') return -1;
-      if (b === 'all') return 1;
-      return a.localeCompare(b);
     });
   }
 
-  // Reattiva per aggiornare i record filtrati e le pagine disponibili
-  $: availablePages = extractAvailablePages(records);
-  $: filteredRecords = filterRecords(records, searchTerm, selectedPageFilter);
+  // Reattiva per aggiornare i record filtrati
+  $: filteredRecords = filterRecords(records, searchTerm);
   $: visibleColumns = getVisibleColumns(columns);
   
   function clearSearch() {
@@ -295,7 +252,7 @@
 
   // Funzione helper per identificare le colonne lingua
   function isLanguageColumn(column) {
-    return visibleColumns.filter(col => col !== 'id' && col !== 'key' && col !== 'keys_project' && col !== 'key_files' && col !== 'image_path' && col !== 'order').includes(column);
+    return visibleColumns.filter(col => col !== 'id' && col !== 'key' && col !== 'keys_project' && col !== 'image_path' && col !== 'order').includes(column);
   }
 
   // Funzione per eliminare il valore di una colonna lingua
@@ -397,7 +354,7 @@
     
     // Trova le lingue che hanno già traduzioni per questo record
     const availableTranslations = visibleColumns
-      .filter(col => col !== 'id' && col !== 'key' && col !== 'keys_project' && col !== 'key_files' && col !== 'image_path' && col !== 'order')
+      .filter(col => col !== 'id' && col !== 'key' && col !== 'keys_project' && col !== 'image_path' && col !== 'order')
       .filter(col => record[col] && record[col].trim())
       .filter(col => col !== languageColumn);
 
@@ -419,25 +376,18 @@
     }
   }
 
-  // Funzione per verificare se una colonna ha valori vuoti da tradurre
+  // Funzione per verificare se una colonna ha valori vuoti
   function hasEmptyValues(column) {
     if (!isLanguageColumn(column)) return false;
-    if (!filteredRecords || filteredRecords.length === 0) return false;
-    
-    // Conta solo i record che hanno una chiave e sono vuoti nella colonna specifica
-    const emptyCount = filteredRecords.filter(record => 
+    return filteredRecords.some(record => 
       (!record[column] || !record[column].trim()) && 
       record['key'] && record['key'].trim()
-    ).length;
-    
-    return emptyCount > 0;
+    );
   }
 
   // Funzione per contare quanti valori vuoti ha una colonna
   function countEmptyValues(column) {
     if (!isLanguageColumn(column)) return 0;
-    if (!filteredRecords || filteredRecords.length === 0) return 0;
-    
     return filteredRecords.filter(record => 
       (!record[column] || !record[column].trim()) && 
       record['key'] && record['key'].trim()
@@ -476,7 +426,7 @@
         try {
           // Trova la migliore fonte per la traduzione
           const availableTranslations = visibleColumns
-            .filter(col => col !== 'id' && col !== 'key' && col !== 'keys_project' && col !== 'key_files' && col !== 'image_path' && col !== 'order')
+            .filter(col => col !== 'id' && col !== 'key' && col !== 'keys_project' && col !== 'image_path' && col !== 'order')
             .filter(col => record[col] && record[col].trim())
             .filter(col => col !== column);
 
@@ -655,38 +605,6 @@
     showDeleteModal = false;
     recordToDelete = null;
   }
-
-  // Funzione per parsare e visualizzare i file come tag
-  function parseKeyFiles(keyFilesJson) {
-    if (!keyFilesJson || keyFilesJson.trim() === '') return [];
-    
-    try {
-      const files = JSON.parse(keyFilesJson);
-      if (Array.isArray(files)) {
-        // Estrae solo il nome del file dal percorso completo
-        return files.map(filePath => {
-          const fileName = filePath.split(/[/\\]/).pop(); // Funziona sia per / che per \
-          return fileName || filePath;
-        });
-      }
-      return [];
-    } catch (error) {
-      console.warn('Errore nel parsing di key_files:', error, keyFilesJson);
-      return [];
-    }
-  }
-
-  // Funzione per aprire il popup con i file
-  function openFilesPopup(keyFilesJson) {
-    popupFiles = parseKeyFiles(keyFilesJson);
-    showFilesPopup = true;
-  }
-
-  // Funzione per chiudere il popup
-  function closeFilesPopup() {
-    showFilesPopup = false;
-    popupFiles = [];
-  }
 </script>
 
 <div class="min-h-screen flex flex-col" style="background: linear-gradient(135deg, #c9ffe7 0%, #e9e9ff 70%, #dcecff 100%);">
@@ -777,24 +695,6 @@
               />
             </div>
             
-            <!-- Filtro per pagina -->
-            <div class="relative">
-              <select
-                bind:value={selectedPageFilter}
-                class="appearance-none bg-white border border-gray-300 rounded-md px-3 py-2 pr-8 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500">
-                {#each availablePages as page}
-                  <option value={page}>
-                    {page === 'all' ? $_('database.all_pages') : page}
-                  </option>
-                {/each}
-              </select>
-              <div class="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
-                <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                </svg>
-              </div>
-            </div>
-            
             <!-- Statistiche compatte -->
             <div class="flex items-center gap-3">
               <div class="flex items-center bg-blue-50 rounded-lg px-3 py-2">
@@ -866,7 +766,7 @@
         </div>
 
         <!-- Contenitore per la tabella -->
-        <div class="w-full pb-18" style="margin-top: 80px;">
+        <div class="w-full pb-32" style="margin-top: 80px;">
           
           <!-- Tabella dei record -->
           {#if filteredRecords.length === 0 && searchTerm}
@@ -889,22 +789,21 @@
             <div class="bg-white/80 backdrop-blur-sm rounded-lg border border-gray-300/50 shadow-lg overflow-hidden">
               <div class="overflow-x-auto overflow-y-auto" style="scrollbar-width: thin; max-height: calc(100vh - 280px);">
                 <table class="min-w-full divide-y divide-gray-200">
-                  <thead class="sticky top-0 z-20 bg-gray-50/80 backdrop-blur-sm">
+                  <thead class="bg-gray-50/80">
                     <tr>
                       {#each visibleColumns as column, columnIndex}
-                        <th class="py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider {columnIndex % 2 === 0 ? 'bg-gray-50/80' : 'bg-blue-100/60'} {column === 'keys_project' ? 'px-2 w-40' : column === 'key_files' ? 'px-6 w-56' : column === 'key' ? 'px-6 w-32' : isLanguageColumn(column) ? 'px-6 min-w-48' : 'px-6'}">
+                        <th class="py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider {columnIndex % 2 === 0 ? 'bg-gray-50/80' : 'bg-blue-100/60'} {column === 'keys_project' ? 'px-2 w-40' : 'px-6'}">
                           <div class="flex items-center justify-between">
                             <span>
                               {column === 'id' ? 'ID' : 
                                column === 'key' ? $_('database.column_key') :
                                column === 'keys_project' ? $_('database.column_project') :
-                               column === 'key_files' ? 'File' :
                                column === 'image_path' ? $_('database.column_image') :
                                column === 'order' ? $_('database.column_order') :
                                column}
                             </span>
                             
-                            {#if isLanguageColumn(column) && hasEmptyValues(column) && countEmptyValues(column) > 0}
+                            {#if isLanguageColumn(column) && hasEmptyValues(column)}
                               <button
                                 on:click={() => translateAllEmpty(column)}
                                 disabled={isTranslating}
@@ -925,7 +824,7 @@
                 {#each filteredRecords as record, index}
                   <tr class="group hover:bg-gray-50/80 transition-colors">
                     {#each visibleColumns as column, columnIndex}
-                      <td class="py-4 text-sm text-gray-900 {columnIndex % 2 === 0 ? 'bg-white/60' : 'bg-blue-50/40'} {column === 'keys_project' ? 'px-2 w-40' : column === 'key_files' ? 'px-6 w-56' : column === 'key' ? 'px-6 w-32' : isLanguageColumn(column) ? 'px-6 min-w-48' : 'px-6 whitespace-nowrap'}">
+                      <td class="py-4 text-sm text-gray-900 {columnIndex % 2 === 0 ? 'bg-white/60' : 'bg-blue-50/40'} {column === 'keys_project' ? 'px-2 w-40' : 'px-6 whitespace-nowrap'}">
                         {#if column === 'keys_project'}
                           <!-- Visualizzazione speciale per la colonna keys_project -->
                           <div class="flex items-center">
@@ -956,17 +855,17 @@
                           </div>
                         {:else if column === 'key'}
                           <!-- Visualizzazione speciale per la colonna key -->
-                          <div class="w-full" title={record[column] || ''}>
+                          <div class="max-w-xs" title={record[column] || ''}>
                             {#if !record[column] && record['keys_project']}
                               <!-- Key non presente ma keys_project sì -->
-                              <div class="flex items-center gap-2">
-                                <div class="flex items-center text-red-600 font-medium flex-1 min-w-0">
-                                  <svg class="w-4 h-4 mr-1 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <div class="flex items-center justify-between">
+                                <div class="flex items-center text-red-600 font-medium">
+                                  <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                                   </svg>
-                                  <span class="truncate">{$_('database.not_present_in_translation')}</span>
+                                  {$_('database.not_present_in_translation')}
                                 </div>
-                                <div class="flex items-center gap-1 flex-shrink-0">
+                                <div class="flex items-center justify-end gap-1">
                                   <button
                                     on:click={() => addKeyToTranslations(record.id, record['keys_project'])}
                                     class="bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1 px-2 rounded flex items-center gap-1"
@@ -985,58 +884,45 @@
                                 </div>
                               </div>
                             {:else if searchTerm && record[column] && record[column].toString().toLowerCase().includes(searchTerm.toLowerCase())}
-                              <div class="truncate max-w-24">
+                              <div class="truncate">
                                 {@html record[column].toString().replace(new RegExp(`(${searchTerm})`, 'gi'), '<mark class="bg-yellow-200 px-1 rounded">$1</mark>')}
                               </div>
                             {:else if !record[column] && !record['keys_project']}
                               <!-- Record completamente vuoto -->
-                              <div class="flex items-center gap-2">
-                                <span class="text-gray-400 flex-1">{$_('database.empty_record')}</span>
-                                <button
-                                  on:click={() => confirmDeleteRecord(record.id)}
-                                  class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded flex-shrink-0"
-                                  title="{$_('database.delete_empty_record')}">
-                                  {$_('database.delete_empty_record')}
-                                </button>
+                              <div class="flex items-center justify-between">
+                                <span class="text-gray-400">{$_('database.empty_record')}</span>
+                                <div class="flex justify-end">
+                                  <button
+                                    on:click={() => confirmDeleteRecord(record.id)}
+                                    class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded"
+                                    title="{$_('database.delete_empty_record')}">
+                                    {$_('database.delete_empty_record')}
+                                  </button>
+                                </div>
                               </div>
                             {:else}
-                              <div class="flex items-center gap-2">
-                                <div class="truncate flex-1 min-w-0 max-w-48">
+                              <div class="flex items-center justify-between">
+                                <div class="truncate">
                                   {record[column] || '—'}
                                 </div>
                                 {#if record[column]}
-                                  <button
-                                    on:click={() => confirmDeleteRecord(record.id)}
-                                    class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded flex-shrink-0"
-                                    title="{$_('database.delete_record')}">
-                                    {$_('database.key_column.delete')}
-                                  </button>
+                                  <div class="flex justify-end">
+                                    <button
+                                      on:click={() => confirmDeleteRecord(record.id)}
+                                      class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded"
+                                      title="{$_('database.delete_record')}">
+                                      {$_('database.key_column.delete')}
+                                    </button>
+                                  </div>
                                 {/if}
                               </div>
-                            {/if}
-                          </div>
-                        {:else if column === 'key_files'}
-                          <!-- Visualizzazione speciale per la colonna key_files -->
-                          <div class="w-full" title="{record[column] || ''}">
-                            {#if parseKeyFiles(record[column]).length > 0}
-                              {@const filesCount = parseKeyFiles(record[column]).length}
-                              <button
-                                on:click={() => openFilesPopup(record[column])}
-                                class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200 hover:bg-blue-200 cursor-pointer transition-colors">
-                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                                {filesCount} {filesCount === 1 ? 'file' : 'files'}
-                              </button>
-                            {:else}
-                              <span class="text-gray-400 text-xs">—</span>
                             {/if}
                           </div>
                         {:else}
                           <!-- Visualizzazione per colonne lingua e altre colonne -->
                           {#if isLanguageColumn(column)}
                             <!-- Questa è una colonna lingua -->
-                            <div class="w-full" title={record[column] || ''}>
+                            <div class="max-w-xs" title={record[column] || ''}>
                               {#if record[column] && record[column].trim()}
                                 <!-- La traduzione esiste già -->
                                 {#if editingCell.id === record.id && editingCell.column === column}
@@ -1057,16 +943,15 @@
                                     </button>
                                   </div>
                                 {:else}
-                                  <!-- MODIFICA QUI: Usa grid per ancorare i pulsanti a destra -->
-                                  <div class="grid grid-cols-[1fr_auto] items-center gap-2 w-full">
-                                    <div class="truncate">
+                                  <div class="flex items-center gap-2">
+                                    <div class="truncate flex-1">
                                       {#if searchTerm && record[column].toString().toLowerCase().includes(searchTerm.toLowerCase())}
                                         {@html record[column].toString().replace(new RegExp(`(${searchTerm})`, 'gi'), '<mark class="bg-yellow-200 px-1 rounded">$1</mark>')}
                                       {:else}
                                         {record[column]}
                                       {/if}
                                     </div>
-                                    <div class="flex items-center gap-1 flex-shrink-0">
+                                    <div class="flex items-center justify-end gap-1 flex-shrink-0">
                                       <button
                                         on:click={() => startEdit(record.id, column, record[column] || '')}
                                         class="bg-yellow-400 hover:bg-yellow-500 text-white text-xs font-bold py-1 px-2 rounded"
@@ -1080,6 +965,7 @@
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
                                         </svg>
+                                        <!--{$_('database.lang_column.delete')} -->
                                       </button>
                                     </div>
                                   </div>
@@ -1105,8 +991,7 @@
                                   </div>
                                 {:else}
                                   {@const action = getTranslationAction(record, column)}
-                                  <!-- MODIFICA QUI: Anche per i pulsanti quando non c'è traduzione -->
-                                  <div class="flex items-center justify-end gap-2 w-full">
+                                  <div class="flex items-center justify-end gap-2">
                                     {#if action && action.type === 'translate'}
                                       <button
                                         on:click={action.action}
@@ -1246,52 +1131,6 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
               </svg>
               {$_('database.delete')}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  <!-- Popup per visualizzare i file -->
-  {#if showFilesPopup}
-    <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div class="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4">
-        <div class="p-6">
-          <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-semibold text-gray-900 flex items-center">
-              <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-              </svg>
-              Files ({popupFiles.length})
-            </h3>
-            <button
-              on:click={closeFilesPopup}
-              class="text-gray-400 hover:text-gray-600 transition-colors">
-              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-              </svg>
-            </button>
-          </div>
-          
-          <div class="max-h-96 overflow-y-auto">
-            <div class="flex flex-wrap gap-2">
-              {#each popupFiles as fileName}
-                <span class="inline-flex items-center px-3 py-2 rounded-full text-sm font-medium bg-blue-100 text-blue-800 border border-blue-200">
-                  <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                  </svg>
-                  {fileName.includes('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName}
-                </span>
-              {/each}
-            </div>
-          </div>
-          
-          <div class="flex justify-end mt-6">
-            <button
-              on:click={closeFilesPopup}
-              class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
-              Chiudi
             </button>
           </div>
         </div>

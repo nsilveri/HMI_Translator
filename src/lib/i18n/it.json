@@ -268,7 +268,9 @@
     "keys_modal_key_number": "Chiave #{number}",
     "keys_modal_extracted_key": "Chiave estratta",
     "keys_modal_file_line": "Riga del file",
-    "keys_modal_importing": "Importando...",
+    "keys_modal_found_in_files": "Trovata nei file",
+    "keys_modal_example_line": "Esempio di riga",
+    "keys_modal_importing": "Importazione...",
     "keys_modal_import_all_keys": "Importa {count} Chiavi",
     "project_keys_modal_title": "Chiavi del Progetto",
     "project_keys_modal_description": "Chiavi nel database con il loro stato di traduzione:",
@@ -304,6 +306,7 @@
     "delete_language_modal_deleting": "Eliminazione..."
   },
   "database": {
+    "all_pages": "Tutte le pagine",
     "back": "Indietro",
     "back_to_previous": "Torna alla pagina precedente",
     "database_title": "Database: {name}",

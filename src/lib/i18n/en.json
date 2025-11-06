@@ -270,6 +270,8 @@
     "keys_modal_key_number": "Key #{number}",
     "keys_modal_extracted_key": "Extracted key",
     "keys_modal_file_line": "File line",
+    "keys_modal_found_in_files": "Found in files",
+    "keys_modal_example_line": "Example line",
     "keys_modal_importing": "Importing...",
     "keys_modal_import_all_keys": "Import {count} Keys",
     "project_keys_modal_title": "Project Keys",
@@ -306,6 +308,7 @@
     "delete_language_modal_deleting": "Deleting..."
   },
   "database": {
+    "all_pages": "All pages",
     "back": "Back",
     "back_to_previous": "Go back to previous page",
     "database_title": "Database: {name}",
