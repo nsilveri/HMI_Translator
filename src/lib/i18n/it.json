@@ -369,6 +369,7 @@
     "export_files_created": "File che saranno creati:",
     "export_files_backed_up": "File che saranno backuppati:",
     "export_no_backup_files": "Nessun file esistente da backuppare",
+    "export_file_encoding": "Codifica (Windows-1252 per compatibilità Movicon):",
     "keys_found": "Trovate {count} chiavi uniche nei file .hmiscr/.movscr",
     "file_imported_success": "File {filename} importato con successo per la lingua {language}!",
     "translation_files_found": "Trovati {count} file di traduzione nella directory del progetto!",

@@ -7,6 +7,39 @@ use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 extern crate regex;
+use encoding_rs::{WINDOWS_1252, UTF_8};
+
+// Robust file reader: tries UTF-8, UTF-8 BOM, UTF-16 LE BOM, then falls back to Windows-1252
+fn read_text_file_best_effort(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+
+    // Try plain UTF-8
+    if let Ok(s) = String::from_utf8(bytes.clone()) {
+        return Ok(s);
+    }
+
+    // UTF-8 with BOM (EF BB BF)
+    if bytes.len() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF {
+        if let Ok(s) = String::from_utf8(bytes[3..].to_vec()) {
+            return Ok(s);
+        }
+    }
+
+    // UTF-16 LE with BOM (FF FE)
+    if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
+        let utf16: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        if let Ok(s) = String::from_utf16(&utf16) {
+            return Ok(s);
+        }
+    }
+
+    // Fallback: decode as Windows-1252 (common for Movicon / PremiumHMI)
+    let (cow, _, _) = WINDOWS_1252.decode(&bytes);
+    Ok(cow.into_owned())
+}
 
 #[tauri::command]
 fn get_tables() -> Result<Vec<std::collections::HashMap<String, String>>, String> {
@@ -271,7 +304,7 @@ async fn fetch_and_set_logo(tableName: String, gameName: String) -> Result<Strin
 }
 
 fn parse_translation_file_content(file_path: &Path) -> Result<std::collections::HashMap<String, String>, String> {
-    let content = fs::read_to_string(file_path).map_err(|e| e.to_string())?;
+    let content = read_text_file_best_effort(file_path).map_err(|e| e.to_string())?;
     let mut translations = std::collections::HashMap::new();
     
     // Try to parse as XML first
@@ -524,21 +557,7 @@ fn find_keys_in_project(directory_path: String, project_name: String) -> Result<
                     println!("Scansiono file: {}", file_path.display());
 
                     // --- Lettura file robusta (UTF-8 o UTF-16) ---
-                    let content = match fs::read_to_string(&file_path) {
-                        Ok(c) => c,
-                        Err(_) => {
-                            let bytes = fs::read(&file_path).map_err(|e| e.to_string())?;
-                            if bytes.len() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE {
-                                let utf16: Vec<u16> = bytes[2..]
-                                    .chunks_exact(2)
-                                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                                    .collect();
-                                String::from_utf16(&utf16).unwrap_or_default()
-                            } else {
-                                String::from_utf8_lossy(&bytes).into_owned()
-                            }
-                        }
-                    };
+                    let content = read_text_file_best_effort(&file_path)?;
 
                     // --- Dividi in righe ---
                     let mut local_count = 0;
@@ -852,7 +871,7 @@ fn get_project_keys(project_name: String) -> Result<Vec<String>, String> {
 #[tauri::command]
 fn import_translation_file_from_path(table_name: String, language_code: String, file_path: String) -> Result<String, String> {
     // Leggi il file dal filesystem
-    let content = std::fs::read_to_string(&file_path).map_err(|e| format!("Errore lettura file {}: {}", file_path, e))?;
+    let content = read_text_file_best_effort(Path::new(&file_path)).map_err(|e| format!("Errore lettura file {}: {}", file_path, e))?;
     
     // Usa la funzione esistente per importare il contenuto
     import_translation_file_with_merge(table_name, language_code, content, file_path)
@@ -1356,7 +1375,7 @@ fn import_translation_file(project_name: String, language_code: String, file_pat
     let table_name: String = project_name.chars().map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' }).collect();
 
     // Leggi e parsa il file XML
-    let content = fs::read_to_string(&file_path).map_err(|e| format!("Errore lettura file: {}", e))?;
+    let content = read_text_file_best_effort(Path::new(&file_path)).map_err(|e| format!("Errore lettura file: {}", e))?;
     
     // Parsing XML semplice per estrarre le coppie key-value
     let mut translations = std::collections::HashMap::new();
@@ -1600,7 +1619,7 @@ fn import_cht(filePath: String) -> Result<String, String> {
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
 
     // Leggi il file .cht
-    let content = fs::read_to_string(&filePath).map_err(|e| e.to_string())?;
+    let content = read_text_file_best_effort(Path::new(&filePath)).map_err(|e| e.to_string())?;
     let mut lines = content.lines();
     // Skippa la prima riga (cheats = n)
     lines.next();
@@ -1935,6 +1954,40 @@ fn update_record_order(tableName: String, recordOrder: Vec<String>) -> Result<St
 }
 
 #[tauri::command]
+fn detect_file_encoding(file_path: String) -> Result<String, String> {
+    // Read the file as raw bytes
+    let bytes = fs::read(&file_path).map_err(|e| format!("Errore lettura file: {}", e))?;
+    
+    // Try to decode as UTF-8 first
+    let utf8_result = UTF_8.decode_without_bom_handling(&bytes);
+    if utf8_result.1 {
+        // Successfully decoded as UTF-8
+        return Ok("UTF-8".to_string());
+    }
+    
+    // Try to decode as Windows-1252
+    let windows1252_result = WINDOWS_1252.decode_without_bom_handling(&bytes);
+    if windows1252_result.1 {
+        // Successfully decoded as Windows-1252
+        return Ok("Windows-1252".to_string());
+    }
+    
+    // If neither works perfectly, check which one produces fewer replacement characters
+    let utf8_text = utf8_result.0;
+    let windows1252_text = windows1252_result.0;
+    
+    // Count replacement characters (�) in each
+    let utf8_replacements = utf8_text.chars().filter(|&c| c == '�').count();
+    let windows1252_replacements = windows1252_text.chars().filter(|&c| c == '�').count();
+    
+    if utf8_replacements <= windows1252_replacements {
+        Ok("UTF-8".to_string())
+    } else {
+        Ok("Windows-1252".to_string())
+    }
+}
+
+#[tauri::command]
 fn export_cht_to_path(table_name: String, file_path: String) -> Result<String, String> {
     let db_path = "../data/projects.db";
     fs::create_dir_all("../data").map_err(|e| e.to_string())?;
@@ -2043,6 +2096,8 @@ fn get_export_preview(table_name: String) -> Result<serde_json::Value, String> {
 
     // Find files that will be backed up
     let mut backup_files = Vec::new();
+    let mut file_encodings = std::collections::HashMap::new();
+    
     for entry in fs::read_dir(&project_path).map_err(|e| e.to_string())? {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
@@ -2065,6 +2120,11 @@ fn get_export_preview(table_name: String) -> Result<serde_json::Value, String> {
                 
                 if is_translation_file {
                     backup_files.push(file_name.to_string());
+                    
+                    // Detect encoding for this file
+                    let encoding = detect_file_encoding(path.to_string_lossy().to_string())
+                        .unwrap_or("UTF-8".to_string());
+                    file_encodings.insert(file_name.to_string(), encoding);
                 }
             }
         }
@@ -2075,7 +2135,10 @@ fn get_export_preview(table_name: String) -> Result<serde_json::Value, String> {
         "projectPath": project_path,
         "exportFiles": export_files,
         "backupFiles": backup_files,
-        "languageCount": extensions.len()
+        "fileEncodings": file_encodings,
+        "languageCount": extensions.len(),
+        // Debug: include detected columns so we can diagnose missing languages
+        "columns": export_columns
     }))
 }
 
@@ -2179,13 +2242,32 @@ fn export_translations_per_language(table_name: String) -> Result<String, String
 
     // For each extension group, create a file with XML format
     for (ext, langs) in &language_groups {
+        // Try to detect encoding from existing file
+        let file_name = format!("{}string.{}", project_name, ext);
+        let file_path = Path::new(&project_path).join(&file_name);
+        let encoding = if file_path.exists() {
+            detect_file_encoding(file_path.to_string_lossy().to_string())
+                .unwrap_or("Windows-1252".to_string())
+        } else {
+            "Windows-1252".to_string() // Default for Movicon/Premium HMI compatibility
+        };
+        
+        let encoding_declaration = match encoding.as_str() {
+            "UTF-8" => "UTF-8",
+            _ => "Windows-1252"
+        };
+        
         let mut content = String::new();
-        content.push_str("<?xml version=\"1.0\" encoding=\"ISO-8859-1\" ?>\n");
+        content.push_str(&format!("<?xml version=\"1.0\" encoding=\"{}\" ?>\n", encoding_declaration));
         content.push_str("<strings>\n");
         content.push_str("<list>\n");
         
         for record in &records {
             if let Some(key) = record.get("key") {
+                // Skip entries with empty keys — Movicon/PremiumHMI requires non-empty keys
+                if key.trim().is_empty() {
+                    continue;
+                }
                 // For each record, use the preferred language in this group
                 let mut val = String::new();
                 
@@ -2227,7 +2309,18 @@ fn export_translations_per_language(table_name: String) -> Result<String, String
 
         let file_name = format!("{}string.{}", project_name, ext);
         let file_path = Path::new(&project_path).join(file_name);
-        fs::write(&file_path, content).map_err(|e| format!("Errore nella scrittura del file {}: {}", file_path.display(), e))?;
+        
+        // Write file with appropriate encoding
+        match encoding.as_str() {
+            "UTF-8" => {
+                fs::write(&file_path, content).map_err(|e| format!("Errore nella scrittura del file {}: {}", file_path.display(), e))?;
+            }
+            _ => {
+                // Encode as Windows-1252 for Movicon/Premium HMI compatibility
+                let (encoded_bytes, _, _) = WINDOWS_1252.encode(&content);
+                fs::write(&file_path, encoded_bytes).map_err(|e| format!("Errore nella scrittura del file {}: {}", file_path.display(), e))?;
+            }
+        }
     }
 
     Ok(format!("Esportati {} file in {} (backup in {})", language_groups.len(), project_path, backup_dir.display()))
@@ -2414,7 +2507,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-    .invoke_handler(tauri::generate_handler![import_cht, import_project_directory, get_tables, delete_table, get_records, set_table_image, delete_table_image, update_record, delete_record, insert_record, get_table_columns, get_table_info, fetch_and_set_logo, get_setting, set_setting, open_url, export_cht_to_path, get_export_preview, export_translations_per_language, update_record_order, add_language_to_project, get_project_languages, remove_language_from_project, import_translation_file, get_translation_files_in_directory, find_keys_in_project, import_project_keys, get_project_keys, get_project_keys_with_status, import_translation_file_from_path, get_imported_files, translate_text, remove_unused_keys, check_accented_characters, fix_accented_characters])
+    .invoke_handler(tauri::generate_handler![import_cht, import_project_directory, get_tables, delete_table, get_records, set_table_image, delete_table_image, update_record, delete_record, insert_record, get_table_columns, get_table_info, fetch_and_set_logo, get_setting, set_setting, open_url, export_cht_to_path, get_export_preview, export_translations_per_language, update_record_order, add_language_to_project, get_project_languages, remove_language_from_project, import_translation_file, get_translation_files_in_directory, find_keys_in_project, import_project_keys, get_project_keys, get_project_keys_with_status, import_translation_file_from_path, get_imported_files, translate_text, remove_unused_keys, check_accented_characters, fix_accented_characters, detect_file_encoding])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

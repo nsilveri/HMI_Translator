@@ -53,6 +53,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.21.7",
  "chrono",
+ "encoding_rs",
  "regex",
  "reqwest 0.11.27",
  "rusqlite",

@@ -697,12 +697,6 @@
           </svg>
           {$_('project.find_keys')}
         </button>
-        <button class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2" on:click={checkAccentedCharacters} disabled={loading}>
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.771-.833-2.693-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
-          </svg>
-          {$_('project.character_check')}
-        </button>
         <button class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2" on:click={openAddLanguageModal}>
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
@@ -1297,11 +1291,18 @@
                 <h4 class="font-semibold text-gray-800 mb-2">{$_('database.export_files_backed_up')}</h4>
                 <div class="bg-yellow-50 rounded-lg p-3 max-h-32 overflow-y-auto">
                   {#each exportPreview.backupFiles as file}
-                    <div class="flex items-center text-yellow-700 text-sm mb-1">
-                      <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path>
-                      </svg>
-                      {file}
+                    <div class="flex items-center justify-between text-yellow-700 text-sm mb-1">
+                      <div class="flex items-center">
+                        <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"></path>
+                        </svg>
+                        {file}
+                      </div>
+                      {#if exportPreview.fileEncodings && exportPreview.fileEncodings[file]}
+                        <span class="bg-yellow-200 text-yellow-800 px-2 py-1 rounded text-xs font-medium">
+                          {exportPreview.fileEncodings[file]}
+                        </span>
+                      {/if}
                     </div>
                   {/each}
                 </div>

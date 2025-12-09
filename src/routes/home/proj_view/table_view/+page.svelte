@@ -777,6 +777,16 @@
               />
             </div>
             
+            <!-- Search summary: appear between search input and page filter -->
+            {#if searchTerm}
+              <div class="ml-3 mt-0 text-sm text-gray-600 bg-yellow-50 rounded-lg p-1">
+                <svg class="inline w-4 h-4 mr-1 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+                {$_('database.search_results', { values: { count: filteredRecords.length, term: searchTerm } })}
+              </div>
+            {/if}
+
             <!-- Filtro per pagina -->
             <div class="relative">
               <select
@@ -855,14 +865,7 @@
             {/if}
           </div>
           
-          {#if searchTerm}
-            <div class="mt-1 text-sm text-gray-600 bg-yellow-50 rounded-lg p-1">
-              <svg class="inline w-4 h-4 mr-1 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              {$_('database.search_results', { values: { count: filteredRecords.length, term: searchTerm } })}
-            </div>
-          {/if}
+          
         </div>
 
         <!-- Contenitore per la tabella -->
