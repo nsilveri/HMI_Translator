@@ -28,3 +28,5 @@ scripts/extract-icon.ps1
 data/database.db
 
 *.code-workspace
+
+data/

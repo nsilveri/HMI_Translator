@@ -3,6 +3,7 @@ import { onMount } from 'svelte';
 import { open } from '@tauri-apps/plugin-dialog';
 import { invoke } from '@tauri-apps/api/core';
 import { _ } from 'svelte-i18n';
+import { goto } from '$app/navigation';
 
   let imageUrl = "";
   const defaultImage = "https://placehold.co/160x90?text=No+Image";
@@ -16,6 +17,8 @@ import { _ } from 'svelte-i18n';
   let loading = false;
   let showImageModal = false;
   let selectedTable = null;
+  let showOpenConfirm = false;
+  let projectToOpen = '';
   let showToast = false;
   let toastMsg = '';
   let toastType = 'success';
@@ -189,6 +192,31 @@ import { _ } from 'svelte-i18n';
     directoryError = '';
   }
 
+  function confirmOpenProject() {
+    if (!projectToOpen) return;
+    showOpenConfirm = false;
+    // navigate to project view
+    goto(`/home/proj_man/proj_view?table=${encodeURIComponent(projectToOpen)}`);
+
+  }
+
+  function cancelOpenProject() {
+    projectToOpen = '';
+    showOpenConfirm = false;
+  }
+
+  function openAlarmsProject() {
+    if (!projectToOpen) return;
+    showOpenConfirm = false;
+    goto(`/home/proj_man/alarm_view?table=${encodeURIComponent(projectToOpen)}`);
+  }
+
+  function openVariablesProject() {
+    if (!projectToOpen) return;
+    showOpenConfirm = false;
+    goto(`/home/proj_man/variable_view?table=${encodeURIComponent(projectToOpen)}`);
+  }
+
 </script>
 
 <div class="min-h-screen flex flex-col" style="background: linear-gradient(135deg, #c9ffe7 0%, #e9e9ff 70%, #dcecff 100%);">
@@ -268,7 +296,7 @@ import { _ } from 'svelte-i18n';
   <main class="flex-grow pt-5 px-5 mb-8" style=" margin-top: 6rem; margin-bottom: 2rem;">
     <div class="w-full h-full overflow-y-auto flex flex-wrap gap-4 pb-20 justify-center"
       style="scrollbar-width: thin;">
-    {#each tables as table}
+    {#each tables.filter(t => !t.name.endsWith('_alarms') && !t.name.endsWith('_alarm_imports') && !t.name.endsWith('_imports') && !t.name.endsWith('_variables') && !t.name.endsWith('_structures') && !t.name.endsWith('_struct_members') && !t.name.endsWith('_variable_imports')) as table}
       <div class="bg-white/90 backdrop-blur-sm rounded-lg border border-white/20 p-2 text-center shadow-lg"
         style="width: {cardWidth}px; height: {cardHeight}px;">
         <img src={table.image ? `data:image/png;base64,${table.image}` : defaultImage} alt="Immagine card"
@@ -280,13 +308,13 @@ import { _ } from 'svelte-i18n';
           on:keydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openImageModal(table); } }} />
         <h2 class="text-base font-semibold text-gray-900 mb-2 truncate">{table.name}</h2>
         <div class="flex justify-center gap-2">
-          <a href="/home/proj_view?table={encodeURIComponent(table.name)}" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded text-xs flex items-center gap-1">
+          <button on:click={() => { projectToOpen = table.name; showOpenConfirm = true; }} class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-2 rounded text-xs flex items-center gap-1">
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
             </svg>
             {$_('home.open')}
-          </a>
+          </button>
           <button class="bg-red-500 hover:bg-red-700 text-white font-bold py-1 px-2 rounded text-xs flex items-center gap-1" on:click={() => chiediElimina(table.name)}>
             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -339,6 +367,58 @@ import { _ } from 'svelte-i18n';
             {$_('home.delete')}
           </button>
         </div>
+      </div>
+    </div>
+  {/if}
+  
+  <!-- OPEN PROJECT CONFIRMATION MODAL -->
+  {#if showOpenConfirm}
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+      <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm mx-4">
+        <div class="text-center mb-6">
+          <div class="mx-auto w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mb-3">
+            <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path>
+            </svg>
+          </div>
+          <h2 class="text-xl font-bold text-gray-900 mb-1">{$_('home.confirm_open_title')}</h2>
+          <p class="text-sm text-gray-500">{projectToOpen}</p>
+        </div>
+        
+        <div class="flex flex-col gap-3 mb-4">
+          <button 
+            class="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg flex items-center justify-center gap-3 transition-colors" 
+            on:click={confirmOpenProject}>
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
+            </svg>
+            {$_('home.open_translations')}
+          </button>
+          
+          <button 
+            class="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-3 px-4 rounded-lg flex items-center justify-center gap-3 transition-colors" 
+            on:click={openAlarmsProject}>
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+            </svg>
+            {$_('home.open_alarms')}
+          </button>
+          
+          <button 
+            class="w-full bg-cyan-500 hover:bg-cyan-600 text-white font-semibold py-3 px-4 rounded-lg flex items-center justify-center gap-3 transition-colors" 
+            on:click={openVariablesProject}>
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
+            </svg>
+            {$_('home.open_variables')}
+          </button>
+        </div>
+        
+        <button 
+          class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 px-4 rounded-lg transition-colors" 
+          on:click={cancelOpenProject}>
+          {$_('home.cancel')}
+        </button>
       </div>
     </div>
   {/if}

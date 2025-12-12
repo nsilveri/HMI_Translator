@@ -31,6 +31,47 @@
   // Page filter state
   let selectedPageFilter = 'all';
   let availablePages = [];
+  // Add new key modal state
+  let showAddKeyModal = false;
+  let newKeyValue = '';
+  let isAddingKey = false;
+  // Multi-select state
+  let selectedRecords = new Set();
+  let showBulkDeleteModal = false;
+  let isUploadingToMachine = false;
+
+  // Upload translations to machine directory
+  async function uploadToMachine() {
+    isUploadingToMachine = true;
+    try {
+      // Get machine path from settings
+      const machinePath = await invoke('get_setting', { key: 'machine_path' });
+      if (!machinePath) {
+        toastMsg = $_('alarms.machine_path_not_configured');
+        toastType = 'error';
+        showToast = true;
+        setTimeout(() => { showToast = false; }, 4000);
+        isUploadingToMachine = false;
+        return;
+      }
+      // Export translations to machine
+      const result = await invoke('export_translations_to_machine', {
+        tableName: tableName,
+        machinePath: machinePath
+      });
+      toastMsg = $_('alarms.upload_to_machine_success') + ' ' + result;
+      toastType = 'success';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 5000);
+    } catch (e) {
+      console.error('Error uploading to machine:', e);
+      toastMsg = $_('alarms.upload_to_machine_error') + ' ' + e;
+      toastType = 'error';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 5000);
+    }
+    isUploadingToMachine = false;
+  }
 
   onMount(async () => {
     const urlParams = $page.url.searchParams;
@@ -148,6 +189,9 @@
   $: availablePages = extractAvailablePages(records);
   $: filteredRecords = filterRecords(records, searchTerm, selectedPageFilter);
   $: visibleColumns = getVisibleColumns(columns);
+  // Calcola se tutti i record filtrati sono selezionati
+  $: allSelected = filteredRecords.length > 0 && filteredRecords.every(r => selectedRecords.has(r.id));
+  $: someSelected = selectedRecords.size > 0;
   
   function clearSearch() {
     searchTerm = '';
@@ -155,6 +199,83 @@
 
   function goBack() {
     window.history.back();
+  }
+
+  // Multi-select functions
+  let lastSelectedIndex = -1; // Per tracciare l'ultimo indice selezionato per Shift+Click
+
+  function toggleSelectAll() {
+    if (allSelected) {
+      // Deseleziona tutti i record filtrati
+      filteredRecords.forEach(r => selectedRecords.delete(r.id));
+    } else {
+      // Seleziona tutti i record filtrati
+      filteredRecords.forEach(r => selectedRecords.add(r.id));
+    }
+    selectedRecords = new Set(selectedRecords); // Trigger reattività
+    lastSelectedIndex = -1;
+  }
+
+  function toggleSelectRecord(recordId, index, event) {
+    // Shift+Click per selezione range
+    if (event && event.shiftKey && lastSelectedIndex !== -1) {
+      const start = Math.min(lastSelectedIndex, index);
+      const end = Math.max(lastSelectedIndex, index);
+      
+      // Seleziona tutti i record nel range
+      for (let i = start; i <= end; i++) {
+        selectedRecords.add(filteredRecords[i].id);
+      }
+      selectedRecords = new Set(selectedRecords); // Trigger reattività
+    } else {
+      // Click normale - toggle singolo
+      if (selectedRecords.has(recordId)) {
+        selectedRecords.delete(recordId);
+      } else {
+        selectedRecords.add(recordId);
+      }
+      selectedRecords = new Set(selectedRecords); // Trigger reattività
+      lastSelectedIndex = index;
+    }
+  }
+
+  function clearSelection() {
+    selectedRecords = new Set();
+    lastSelectedIndex = -1;
+  }
+
+  function openBulkDeleteModal() {
+    showBulkDeleteModal = true;
+  }
+
+  function closeBulkDeleteModal() {
+    showBulkDeleteModal = false;
+  }
+
+  async function confirmBulkDelete() {
+    try {
+      const idsToDelete = Array.from(selectedRecords);
+      
+      // Elimina ogni record selezionato
+      for (const id of idsToDelete) {
+        await invoke('delete_record', { tableName: tableName, id: id });
+      }
+      
+      // Aggiorna l'array locale rimuovendo i record eliminati
+      records = records.filter(r => !selectedRecords.has(r.id));
+      
+      // Resetta la selezione
+      selectedRecords = new Set();
+      lastSelectedIndex = -1;
+      showBulkDeleteModal = false;
+      
+      // Mostra messaggio di successo
+      showToastMessage($_('database.bulk_delete_success', { values: { count: idsToDelete.length } }), 'success');
+      
+    } catch (error) {
+      console.error('Errore nell\'eliminazione multipla:', error);
+      showToastMessage($_('database.bulk_delete_error') + ' ' + error, 'error');
+    }
   }
 
   async function removeUnusedKeys() {
@@ -424,10 +545,10 @@
     if (!isLanguageColumn(column)) return false;
     if (!filteredRecords || filteredRecords.length === 0) return false;
     
-    // Conta solo i record che hanno una chiave e sono vuoti nella colonna specifica
+    // Conta solo i record che hanno una chiave (key o keys_project) e sono vuoti nella colonna specifica
     const emptyCount = filteredRecords.filter(record => 
       (!record[column] || !record[column].trim()) && 
-      record['key'] && record['key'].trim()
+      ((record['key'] && record['key'].trim()) || (record['keys_project'] && record['keys_project'].trim()))
     ).length;
     
     return emptyCount > 0;
@@ -440,7 +561,7 @@
     
     return filteredRecords.filter(record => 
       (!record[column] || !record[column].trim()) && 
-      record['key'] && record['key'].trim()
+      ((record['key'] && record['key'].trim()) || (record['keys_project'] && record['keys_project'].trim()))
     ).length;
   }
 
@@ -450,7 +571,7 @@
     
     const emptyRecords = filteredRecords.filter(record => 
       (!record[column] || !record[column].trim()) && 
-      record['key'] && record['key'].trim()
+      ((record['key'] && record['key'].trim()) || (record['keys_project'] && record['keys_project'].trim()))
     );
     
     if (emptyRecords.length === 0) {
@@ -488,8 +609,8 @@
             sourceLang = availableTranslations[0];
             sourceText = record[sourceLang];
           } else {
-            // Usa la chiave come fallback
-            sourceText = record['key'];
+            // Usa la chiave come fallback (preferisci key, altrimenti keys_project)
+            sourceText = (record['key'] && record['key'].trim()) ? record['key'] : record['keys_project'];
             sourceLang = 'auto';
           }
 
@@ -656,6 +777,65 @@
     recordToDelete = null;
   }
 
+  // Funzione per aprire il modal di aggiunta chiave
+  function openAddKeyModal() {
+    newKeyValue = '';
+    showAddKeyModal = true;
+  }
+
+  // Funzione per chiudere il modal di aggiunta chiave
+  function closeAddKeyModal() {
+    showAddKeyModal = false;
+    newKeyValue = '';
+    isAddingKey = false;
+  }
+
+  // Funzione per aggiungere una nuova chiave
+  async function addNewKey() {
+    if (!newKeyValue || newKeyValue.trim() === '') {
+      toastMsg = $_('database.key_required');
+      toastType = 'warning';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 3000);
+      return;
+    }
+
+    // Verifica se la chiave esiste già
+    const existingKey = records.find(r => r['key'] === newKeyValue.trim());
+    if (existingKey) {
+      toastMsg = $_('database.key_already_exists');
+      toastType = 'warning';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 3000);
+      return;
+    }
+
+    isAddingKey = true;
+    try {
+      const record = {
+        key: newKeyValue.trim()
+      };
+
+      await invoke('insert_record', { tableName: tableName, record: record });
+
+      toastMsg = $_('database.key_added_success');
+      toastType = 'success';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 3000);
+
+      // Ricarica i dati
+      await loadDatabaseData();
+      closeAddKeyModal();
+    } catch (error) {
+      console.error('Errore nell\'aggiunta della chiave:', error);
+      toastMsg = $_('database.error_adding_key') + ' ' + error;
+      toastType = 'error';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 3000);
+    }
+    isAddingKey = false;
+  }
+
   // Funzione per parsare e visualizzare i file come tag
   function parseKeyFiles(keyFilesJson) {
     if (!keyFilesJson || keyFilesJson.trim() === '') return [];
@@ -738,6 +918,17 @@
           </svg>
           {loading ? $_('database.reloading') : $_('database.reload')}
         </button>
+        <button
+          class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
+          on:click={uploadToMachine}
+          disabled={isUploadingToMachine}
+          title={$_('alarms.upload_to_machine')}
+        >
+          {#if isUploadingToMachine}
+            <span class="animate-spin mr-1">⏳</span>
+          {/if}
+          {$_('alarms.upload_to_machine')}
+        </button>
       </div>
     </div>
   </header>
@@ -759,7 +950,7 @@
       </div>
     {:else}
       <!-- Barra di ricerca e statistiche fissa -->
-      <div class="fixed top-24 left-5 right-5 z-20 bg-white/95 backdrop-blur-md rounded-lg border border-gray-300/50 shadow-xl p-4">
+      <div class="fixed top-24 left-5 right-5 z-20 bg-white/95 backdrop-blur-md rounded-lg border border-gray-300/50  p-4">
           <!-- Barra di ricerca con statistiche integrate -->
           <div class="flex items-center gap-4 mb-1">
             <!-- Campo di ricerca -->
@@ -863,10 +1054,47 @@
                 {$_('database.clear')}
               </button>
             {/if}
+
+            <!-- Pulsante Aggiungi chiave -->
+            <button
+              on:click={openAddKeyModal}
+              class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2"
+              aria-label="{$_('database.add_key')}">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+              </svg>
+              {$_('database.add_key')}
+            </button>
           </div>
           
           
         </div>
+
+        <!-- Barra azioni selezione multipla -->
+        {#if someSelected}
+          <div class="fixed bottom-4 left-1/2 transform -translate-x-1/2 z-50 bg-gray-800 text-white px-6 py-3 rounded-lg shadow-xl flex items-center gap-4">
+            <span class="text-sm font-medium">
+              {$_('database.selected_count', { values: { count: selectedRecords.size } })}
+            </span>
+            <div class="h-4 w-px bg-gray-500"></div>
+            <button
+              on:click={openBulkDeleteModal}
+              class="bg-red-500 hover:bg-red-600 text-white text-sm font-bold py-1.5 px-4 rounded flex items-center gap-2 transition-colors">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+              </svg>
+              {$_('database.delete_selected')}
+            </button>
+            <button
+              on:click={clearSelection}
+              class="bg-gray-600 hover:bg-gray-500 text-white text-sm font-bold py-1.5 px-4 rounded flex items-center gap-2 transition-colors">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+              {$_('database.clear_selection')}
+            </button>
+          </div>
+        {/if}
 
         <!-- Contenitore per la tabella -->
         <div class="w-full pb-18" style="margin-top: 80px;">
@@ -894,9 +1122,20 @@
                 <table class="min-w-full divide-y divide-gray-200">
                   <thead class="sticky top-0 z-20 bg-gray-50/80 backdrop-blur-sm">
                     <tr>
+                      <!-- Checkbox header per seleziona tutto -->
+                      <th class="py-3 px-3 text-center bg-gray-50/80 w-10">
+                        <div class="flex flex-col items-center gap-1">
+                          <input
+                            type="checkbox"
+                            checked={allSelected}
+                            on:change={toggleSelectAll}
+                            class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                            title="{allSelected ? $_('database.deselect_all') : $_('database.select_all')} - {$_('database.shift_click_hint')}" />
+                        </div>
+                      </th>
                       {#each visibleColumns as column, columnIndex}
-                        <th class="py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider {columnIndex % 2 === 0 ? 'bg-gray-50/80' : 'bg-blue-100/60'} {column === 'keys_project' ? 'px-2 w-40' : column === 'key_files' ? 'px-6 w-56' : column === 'key' ? 'px-6 w-32' : isLanguageColumn(column) ? 'px-6 min-w-48' : 'px-6'}">
-                          <div class="flex items-center justify-between">
+                        <th class="py-3 px-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap {columnIndex % 2 === 0 ? 'bg-gray-50/80' : 'bg-blue-100/60'}">
+                          <div class="flex items-center justify-between gap-2">
                             <span>
                               {column === 'id' ? 'ID' : 
                                column === 'key' ? $_('database.column_key') :
@@ -911,7 +1150,7 @@
                               <button
                                 on:click={() => translateAllEmpty(column)}
                                 disabled={isTranslating}
-                                class="ml-2 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white text-xs font-bold py-1 px-2 rounded flex items-center gap-1 transition-colors"
+                                class="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white text-xs font-bold py-1 px-2 rounded flex items-center gap-1 transition-colors whitespace-nowrap"
                                 title="{$_('database.translate_all_empty', { values: { count: countEmptyValues(column), column } })}">
                                 <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
@@ -926,53 +1165,65 @@
                   </thead>
                   <tbody class="bg-white/60 divide-y divide-gray-200">
                 {#each filteredRecords as record, index}
-                  <tr class="group hover:bg-gray-50/80 transition-colors">
+                  <tr class="group hover:bg-gray-50/80 transition-colors {selectedRecords.has(record.id) ? 'bg-blue-50/60' : ''}">
+                    <!-- Checkbox per selezione riga (con supporto Shift+Click) -->
+                    <td class="py-3 px-3 text-center {selectedRecords.has(record.id) ? 'bg-blue-100/60' : 'bg-white/60'} w-10 select-none">
+                      <input
+                        type="checkbox"
+                        checked={selectedRecords.has(record.id)}
+                        on:click={(e) => toggleSelectRecord(record.id, index, e)}
+                        class="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500 cursor-pointer"
+                        title="{$_('database.shift_click_hint')}" />
+                    </td>
                     {#each visibleColumns as column, columnIndex}
-                      <td class="py-4 text-sm text-gray-900 {columnIndex % 2 === 0 ? 'bg-white/60' : 'bg-blue-50/40'} {column === 'keys_project' ? 'px-2 w-40' : column === 'key_files' ? 'px-6 w-56' : column === 'key' ? 'px-6 w-32' : isLanguageColumn(column) ? 'px-6 min-w-48' : 'px-6 whitespace-nowrap'}">
+                      <td class="py-3 px-4 text-sm text-gray-900 whitespace-nowrap {columnIndex % 2 === 0 ? 'bg-white/60' : 'bg-blue-50/40'}">
                         {#if column === 'keys_project'}
-                          <!-- Visualizzazione speciale per la colonna keys_project -->
-                          <div class="flex items-center">
-                            {#if record[column] && record[column] === record['key']}
-                              <div class="flex items-center text-green-600 font-medium">
-                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                                </svg>
-                                {$_('database.present')}
-                              </div>
-                            {:else if record[column] && !record['key']}
-                              <!-- Chiave presente nel progetto ma non tradotta -->
-                              <div class="max-w-48 truncate text-orange-600 font-medium" title={record[column] || ''}>
+                          <!-- Visualizzazione speciale per la colonna keys_project con badge -->
+                          {#if record[column] && record[column] === record['key']}
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                              </svg>
+                              {$_('database.present')}
+                            </span>
+                          {:else if record[column] && !record['key']}
+                            <!-- Chiave presente nel progetto ma non tradotta -->
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                              <svg class="w-3 h-3 mr-1 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                              </svg>
+                              <span>
                                 {#if searchTerm && record[column].toString().toLowerCase().includes(searchTerm.toLowerCase())}
                                   {@html record[column].toString().replace(new RegExp(`(${searchTerm})`, 'gi'), '<mark class="bg-yellow-200 px-1 rounded">$1</mark>')}
                                 {:else}
                                   {record[column]}
                                 {/if}
-                              </div>
-                            {:else}
-                              <div class="flex items-center text-red-600 font-medium">
-                                <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                                </svg>
-                                {$_('database.not_present')}
-                              </div>
-                            {/if}
-                          </div>
+                              </span>
+                            </span>
+                          {:else}
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                              <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                              </svg>
+                              {$_('database.not_present')}
+                            </span>
+                          {/if}
                         {:else if column === 'key'}
                           <!-- Visualizzazione speciale per la colonna key -->
                           <div class="w-full" title={record[column] || ''}>
                             {#if !record[column] && record['keys_project']}
                               <!-- Key non presente ma keys_project sì -->
-                              <div class="flex items-center gap-2">
-                                <div class="flex items-center text-red-600 font-medium flex-1 min-w-0">
-                                  <svg class="w-4 h-4 mr-1 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                              <div class="flex items-center justify-between gap-4 w-full">
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                  <svg class="w-3 h-3 mr-1 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/>
                                   </svg>
-                                  <span class="truncate">{$_('database.not_present_in_translation')}</span>
-                                </div>
-                                <div class="flex items-center gap-1 flex-shrink-0">
+                                  <span>{$_('database.not_present_in_translation')}</span>
+                                </span>
+                                <div class="flex items-center gap-1 flex-shrink-0 ml-auto">
                                   <button
                                     on:click={() => addKeyToTranslations(record.id, record['keys_project'])}
-                                    class="bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1 px-2 rounded flex items-center gap-1"
+                                    class="bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1 px-3 rounded flex items-center gap-1"
                                     title="{$_('database.add_key_to_translations')}">
                                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
@@ -981,38 +1232,46 @@
                                   </button>
                                   <button
                                     on:click={() => confirmDeleteRecord(record.id)}
-                                    class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded"
+                                    class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-3 rounded flex items-center gap-1"
                                     title="{$_('database.delete_record')}">
-                                    {$_('database.key_column.delete')}
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
                                   </button>
                                 </div>
                               </div>
                             {:else if searchTerm && record[column] && record[column].toString().toLowerCase().includes(searchTerm.toLowerCase())}
-                              <div class="truncate max-w-24">
+                              <div>
                                 {@html record[column].toString().replace(new RegExp(`(${searchTerm})`, 'gi'), '<mark class="bg-yellow-200 px-1 rounded">$1</mark>')}
                               </div>
                             {:else if !record[column] && !record['keys_project']}
                               <!-- Record completamente vuoto -->
-                              <div class="flex items-center gap-2">
-                                <span class="text-gray-400 flex-1">{$_('database.empty_record')}</span>
+                              <div class="flex items-center justify-between gap-4 w-full">
+                                <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                                  {$_('database.empty_record')}
+                                </span>
                                 <button
                                   on:click={() => confirmDeleteRecord(record.id)}
-                                  class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded flex-shrink-0"
+                                  class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-3 rounded flex-shrink-0 flex items-center gap-1 ml-auto"
                                   title="{$_('database.delete_empty_record')}">
-                                  {$_('database.delete_empty_record')}
+                                  <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                  </svg>
                                 </button>
                               </div>
                             {:else}
-                              <div class="flex items-center gap-2">
-                                <div class="truncate flex-1 min-w-0 max-w-48">
+                              <div class="flex items-center justify-between gap-4 w-full">
+                                <span class="text-gray-700 font-mono text-xs">
                                   {record[column] || '—'}
-                                </div>
+                                </span>
                                 {#if record[column]}
                                   <button
                                     on:click={() => confirmDeleteRecord(record.id)}
-                                    class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded flex-shrink-0"
+                                    class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-3 rounded flex-shrink-0 flex items-center gap-1 ml-auto"
                                     title="{$_('database.delete_record')}">
-                                    {$_('database.key_column.delete')}
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
                                   </button>
                                 {/if}
                               </div>
@@ -1020,21 +1279,21 @@
                           </div>
                         {:else if column === 'key_files'}
                           <!-- Visualizzazione speciale per la colonna key_files -->
-                          <div class="w-full" title="{record[column] || ''}">
-                            {#if parseKeyFiles(record[column]).length > 0}
-                              {@const filesCount = parseKeyFiles(record[column]).length}
-                              <button
-                                on:click={() => openFilesPopup(record[column])}
-                                class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200 hover:bg-blue-200 cursor-pointer transition-colors">
-                                <svg class="w-3 h-3 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                                </svg>
-                                {filesCount} {filesCount === 1 ? 'file' : 'files'}
-                              </button>
-                            {:else}
-                              <span class="text-gray-400 text-xs">—</span>
-                            {/if}
-                          </div>
+                          {#if parseKeyFiles(record[column]).length > 0}
+                            {@const filesCount = parseKeyFiles(record[column]).length}
+                            <button
+                              on:click={() => openFilesPopup(record[column])}
+                              class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 hover:bg-blue-200 transition-colors">
+                              <svg class="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" clip-rule="evenodd"/>
+                              </svg>
+                              {filesCount} {filesCount === 1 ? 'file' : 'files'}
+                            </button>
+                          {:else}
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-400">—</span>
+                          {/if}
+                        {:else if column === 'id'}
+                          <span class="text-gray-500 font-mono text-xs">{record[column]}</span>
                         {:else}
                           <!-- Visualizzazione per colonne lingua e altre colonne -->
                           {#if isLanguageColumn(column)}
@@ -1045,40 +1304,43 @@
                                 {#if editingCell.id === record.id && editingCell.column === column}
                                   <div class="flex items-center gap-2">
                                     <input
-                                      class="border border-gray-300 rounded px-2 py-1 text-sm w-full"
+                                      class="border border-gray-300 rounded px-2 py-1 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
                                       bind:value={editValue}
                                       placeholder="{$_('database.enter_value')}" />
                                     <button
                                       on:click={() => saveEdit(record.id, column)}
-                                      class="bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1 px-2 rounded">
+                                      class="bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1 px-3 rounded">
                                       {$_('database.save')}
                                     </button>
                                     <button
                                       on:click={cancelEdit}
-                                      class="bg-gray-300 hover:bg-gray-400 text-gray-800 text-xs font-bold py-1 px-2 rounded">
+                                      class="bg-gray-300 hover:bg-gray-400 text-gray-800 text-xs font-bold py-1 px-3 rounded">
                                       {$_('database.cancel')}
                                     </button>
                                   </div>
                                 {:else}
-                                  <!-- MODIFICA QUI: Usa grid per ancorare i pulsanti a destra -->
-                                  <div class="grid grid-cols-[1fr_auto] items-center gap-2 w-full">
-                                    <div class="truncate">
+                                  <!-- Layout con testo e pulsanti ancorati a destra -->
+                                  <div class="flex items-center justify-between gap-4 w-full">
+                                    <div class="text-gray-700">
                                       {#if searchTerm && record[column].toString().toLowerCase().includes(searchTerm.toLowerCase())}
                                         {@html record[column].toString().replace(new RegExp(`(${searchTerm})`, 'gi'), '<mark class="bg-yellow-200 px-1 rounded">$1</mark>')}
                                       {:else}
                                         {record[column]}
                                       {/if}
                                     </div>
-                                    <div class="flex items-center gap-1 flex-shrink-0">
+                                    <div class="flex items-center gap-1 flex-shrink-0 ml-auto">
                                       <button
                                         on:click={() => startEdit(record.id, column, record[column] || '')}
-                                        class="bg-yellow-400 hover:bg-yellow-500 text-white text-xs font-bold py-1 px-2 rounded"
+                                        class="bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-bold py-1 px-3 rounded flex items-center gap-1"
                                         title="{$_('database.edit_value')}">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                        </svg>
                                         {$_('database.edit')}
                                       </button>
                                       <button
                                         on:click={() => clearLanguageValue(record.id, column)}
-                                        class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-2 rounded flex-shrink-0 flex items-center gap-1"
+                                        class="bg-red-500 hover:bg-red-600 text-white text-xs font-bold py-1 px-3 rounded flex-shrink-0 flex items-center gap-1"
                                         title="{$_('database.delete_value')}">
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
@@ -1092,29 +1354,29 @@
                                 {#if editingCell.id === record.id && editingCell.column === column}
                                   <div class="flex items-center gap-2">
                                     <input
-                                      class="border border-gray-300 rounded px-2 py-1 text-sm w-full"
+                                      class="border border-gray-300 rounded px-2 py-1 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
                                       bind:value={editValue}
                                       placeholder="{$_('database.enter_value')}" />
                                     <button
                                       on:click={() => saveEdit(record.id, column)}
-                                      class="bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1 px-2 rounded">
+                                      class="bg-green-500 hover:bg-green-600 text-white text-xs font-bold py-1 px-3 rounded">
                                       {$_('database.save')}
                                     </button>
                                     <button
                                       on:click={cancelEdit}
-                                      class="bg-gray-300 hover:bg-gray-400 text-gray-800 text-xs font-bold py-1 px-2 rounded">
+                                      class="bg-gray-300 hover:bg-gray-400 text-gray-800 text-xs font-bold py-1 px-3 rounded">
                                       {$_('database.cancel')}
                                     </button>
                                   </div>
                                 {:else}
                                   {@const action = getTranslationAction(record, column)}
-                                  <!-- MODIFICA QUI: Anche per i pulsanti quando non c'è traduzione -->
-                                  <div class="flex items-center justify-end gap-2 w-full">
+                                  <!-- Pulsanti quando non c'è traduzione -->
+                                  <div class="flex items-center justify-end gap-1 w-full">
                                     {#if action && action.type === 'translate'}
                                       <button
                                         on:click={action.action}
                                         disabled={isTranslating}
-                                        class="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white text-xs font-bold py-1 px-2 rounded flex items-center gap-1"
+                                        class="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white text-xs font-bold py-1 px-3 rounded flex items-center gap-1"
                                         title={action.text}>
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
@@ -1126,7 +1388,7 @@
                                     {#if record['key']}
                                       <button
                                         on:click={() => addFromKey(record.id, column, record['key'])}
-                                        class="bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold py-1 px-2 rounded flex items-center gap-1"
+                                        class="bg-indigo-500 hover:bg-indigo-600 text-white text-xs font-bold py-1 px-3 rounded flex items-center gap-1"
                                         title="{$_('database.add_value_from_key')}">
                                         <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
@@ -1138,13 +1400,16 @@
                                     <!-- Bottone per abilitare modifica manuale inline -->
                                     <button
                                       on:click={() => startEdit(record.id, column, record[column] || '')}
-                                      class="bg-yellow-400 hover:bg-yellow-500 text-white text-xs font-bold py-1 px-2 rounded"
+                                      class="bg-yellow-500 hover:bg-yellow-600 text-white text-xs font-bold py-1 px-3 rounded flex items-center gap-1"
                                       title="{$_('database.manual_edit')}">
+                                      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
+                                      </svg>
                                       {$_('database.edit')}
                                     </button>
 
                                     {#if !action && !record['key']}
-                                      <span class="text-gray-400">—</span>
+                                      <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-400">—</span>
                                     {/if}
                                   </div>
                                 {/if}
@@ -1152,7 +1417,7 @@
                             </div>
                           {:else}
                             <!-- Colonna normale (non lingua) -->
-                            <div class="max-w-xs truncate" title={record[column] || ''}>
+                            <div class="max-w-xs truncate text-gray-700" title={record[column] || ''}>
                               {#if searchTerm && record[column] && record[column].toString().toLowerCase().includes(searchTerm.toLowerCase())}
                                 {@html record[column].toString().replace(new RegExp(`(${searchTerm})`, 'gi'), '<mark class="bg-yellow-200 px-1 rounded">$1</mark>')}
                               {:else}
@@ -1177,7 +1442,7 @@
   <!-- Modal di conferma -->
   {#if showConfirmModal}
     <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+      <div class="relative bg-white rounded-lg  max-w-md w-full mx-4">
         <div class="p-6">
           <div class="flex items-center mb-4">
             {#if confirmModalType === 'error'}
@@ -1227,7 +1492,7 @@
   <!-- Modal di conferma eliminazione -->
   {#if showDeleteModal}
     <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+      <div class="relative bg-white rounded-lg  max-w-md w-full mx-4">
         <div class="p-6">
           <div class="flex items-center mb-4">
             <svg class="w-6 h-6 text-red-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1259,7 +1524,7 @@
   <!-- Popup per visualizzare i file -->
   {#if showFilesPopup}
     <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div class="relative bg-white rounded-lg shadow-xl max-w-lg w-full mx-4">
+      <div class="relative bg-white rounded-lg  max-w-lg w-full mx-4">
         <div class="p-6">
           <div class="flex items-center justify-between mb-4">
             <h3 class="text-lg font-semibold text-gray-900 flex items-center">
@@ -1295,6 +1560,113 @@
               on:click={closeFilesPopup}
               class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
               Chiudi
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Modal per aggiungere una nuova chiave -->
+  {#if showAddKeyModal}
+    <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+      <div class="relative bg-white rounded-lg  max-w-md w-full mx-4">
+        <div class="p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h3 class="text-lg font-semibold text-gray-900 flex items-center">
+              <svg class="w-5 h-5 mr-2 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+              </svg>
+              {$_('database.add_new_key')}
+            </h3>
+            <button
+              on:click={closeAddKeyModal}
+              class="text-gray-400 hover:text-gray-600 transition-colors"
+              aria-label="{$_('database.cancel')}">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+              </svg>
+            </button>
+          </div>
+          
+          <div class="mb-4">
+            <label for="newKeyInput" class="block text-sm font-medium text-gray-700 mb-2">
+              {$_('database.key_name')}
+            </label>
+            <input
+              id="newKeyInput"
+              type="text"
+              bind:value={newKeyValue}
+              placeholder="{$_('database.enter_key_name')}"
+              class="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-green-500 sm:text-sm"
+              on:keydown={(e) => { if (e.key === 'Enter') addNewKey(); }}
+            />
+            <p class="mt-2 text-sm text-gray-500">
+              {$_('database.key_name_hint')}
+            </p>
+          </div>
+          
+          <div class="flex justify-end gap-3">
+            <button
+              on:click={closeAddKeyModal}
+              class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
+              {$_('database.cancel')}
+            </button>
+            <button
+              on:click={addNewKey}
+              disabled={isAddingKey || !newKeyValue.trim()}
+              class="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white font-bold py-2 px-4 rounded flex items-center gap-2">
+              {#if isAddingKey}
+                <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                {$_('database.adding')}
+              {:else}
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+                </svg>
+                {$_('database.add')}
+              {/if}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Modal conferma eliminazione multipla -->
+  {#if showBulkDeleteModal}
+    <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+      <div class="relative bg-white rounded-lg max-w-md w-full mx-4">
+        <div class="p-6">
+          <div class="flex items-center mb-4">
+            <div class="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+              <svg class="h-6 w-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+              </svg>
+            </div>
+          </div>
+          
+          <div class="text-center">
+            <h3 class="text-lg font-semibold text-gray-900 mb-2">
+              {$_('database.confirm_bulk_delete')}
+            </h3>
+            <p class="text-sm text-gray-500">
+              {$_('database.confirm_bulk_delete_message', { values: { count: selectedRecords.size } })}
+            </p>
+          </div>
+          
+          <div class="flex justify-center gap-3 mt-6">
+            <button
+              on:click={closeBulkDeleteModal}
+              class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
+              {$_('database.cancel')}
+            </button>
+            <button
+              on:click={confirmBulkDelete}
+              class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+              </svg>
+              {$_('database.delete_selected')}
             </button>
           </div>
         </div>

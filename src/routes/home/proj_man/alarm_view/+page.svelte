@@ -3,23 +3,20 @@
   import { page } from '$app/stores';
   import { invoke } from '@tauri-apps/api/core';
   import { _ } from 'svelte-i18n';
+  import { goto } from '$app/navigation';
 
-  let languages = [];
-  let tableName = '';
+  let alarms = [];
+  let alarmsImportedFiles = [];
+  let alarmsCount = 0;
   let projectInfo = null;
-  let foundTranslationFiles = [];
-  let importedFiles = [];
-  let recordsCount = 0;
 
   let showToast = false;
   let toastMsg = '';
   let toastType = 'success';
-  let showAddLanguageModal = false;
-  let newLanguageCode = '';
-  let newLanguageName = '';
   let loading = false;
   let showKeysModal = false;
   let foundKeys = [];
+  let foundAlarmFiles = [];
   let showProjectKeysModal = false;
   let projectKeys = [];
   let projectKeysDetails = [];
@@ -28,21 +25,15 @@
   let showAccentedCharsModal = false;
   let accentedCharacters = [];
   let selectedFixes = [];
-  let selectedLanguages = [];
-  let maxVisibleLanguages = 3;
-  let showDeleteLanguageModal = false;
-  let languageToDelete = null;
-  
-  // Computed property per le lingue da visualizzare
-  $: visibleLanguages = selectedLanguages.length > 0 
-    ? languages.filter(lang => selectedLanguages.includes(lang.code))
-    : languages.slice(0, maxVisibleLanguages);
+  let recordsCount = 0;
+  let showDeleteAlarmsModal = false;
   
   // Card display settings (simili alla home)
   let cardWidth = 180; // px
   let cardHeight = 170; // px
   let imageHeight = 90; // px
   const defaultImage = "https://placehold.co/160x90?text=Language";
+  let tableName = '';
 
   onMount(async () => {
     const urlParams = $page.url.searchParams;
@@ -59,47 +50,50 @@
 
   async function loadProjectData() {
     try {
-      // Carica le informazioni del progetto e le lingue
+      // Carica le informazioni del progetto
       projectInfo = await invoke('get_table_info', { tableName: tableName });
-      languages = await invoke('get_project_languages', { projectName: tableName });
       
-      // Carica i file già importati
-      importedFiles = await invoke('get_imported_files', { projectName: tableName });
-      
-      // Carica il numero di record nel database
-      const records = await invoke('get_records', { tableName: tableName });
-      recordsCount = records.length;
-      
-      // Carica le chiavi del progetto dal database
+      // Carica i file di allarmi già importati
       try {
-        projectKeys = await invoke('get_project_keys', { projectName: tableName });
-        console.log('Loaded project keys:', projectKeys.length);
+        alarmsImportedFiles = await invoke('get_alarm_imported_files', { tableName: tableName });
       } catch (e) {
-        console.error('Errore caricamento chiavi progetto:', e);
-        projectKeys = [];
+        alarmsImportedFiles = [];
+      }
+
+      // Carica gli allarmi dal database
+      const alarmsProjectName = `${tableName}_alarms`;
+      try {
+        const records = await invoke('get_records', { tableName: alarmsProjectName });
+        alarms = records || [];
+        alarmsCount = alarms.length;
+      } catch (e) {
+        alarms = [];
+        alarmsCount = 0;
       }
       
-      // Se abbiamo il percorso del progetto, scansiona i file di traduzione UNA SOLA VOLTA
+      console.log('Loaded alarms:', alarms);
+      console.log('Project info:', projectInfo);
+      console.log('Alarms imported files:', alarmsImportedFiles);
+
+      // Cerca automaticamente i file .hmialr nella directory del progetto
+      console.log('Searching for alarm files in project directory...');
+      console.log('Project path:', projectInfo.path, 'Project info:', projectInfo);
+
       if (projectInfo && projectInfo.path) {
-        console.log('Scanning directory for translation files:', projectInfo.path);
         try {
-          foundTranslationFiles = await invoke('get_translation_files_in_directory', { 
+          foundAlarmFiles = await invoke('get_alarm_files_in_directory', { 
             directoryPath: projectInfo.path,
             tableName: tableName
           });
-          console.log('Found translation files:', foundTranslationFiles);
+          
+          if (foundAlarmFiles.length > 0) {
+            console.log('Found alarm files automatically:', foundAlarmFiles.length);
+          }
         } catch (e) {
-          console.error('Errore scansione file di traduzione:', e);
-          foundTranslationFiles = [];
+          console.log('No alarm files found automatically:', e);
+          foundAlarmFiles = [];
         }
-      } else {
-        console.log('No project path available, projectInfo:', projectInfo);
-        foundTranslationFiles = [];
       }
-      
-      console.log('Loaded languages:', languages);
-      console.log('Project info:', projectInfo);
-      console.log('Imported files:', importedFiles);
     } catch (e) {
       console.error('Errore caricamento dati progetto:', e);
       toastMsg = $_('home.error_loading_project') + ' ' + e;
@@ -109,58 +103,7 @@
     }
   }
 
-  async function addLanguage() {
-    if (!newLanguageCode.trim() || !newLanguageName.trim()) {
-      toastMsg = $_('home.enter_language_code');
-      toastType = 'error';
-      showToast = true;
-      setTimeout(() => { showToast = false; }, 2500);
-      return;
-    }
 
-    loading = true;
-    try {
-      const result = await invoke('add_language_to_project', { 
-        projectName: tableName, 
-        languageCode: newLanguageCode.trim().toLowerCase(), 
-        languageName: newLanguageName.trim() 
-      });
-      toastMsg = result;
-      toastType = 'success';
-      await loadProjectData(); // Ricarica i dati
-      closeAddLanguageModal();
-    } catch (e) {
-      toastMsg = $_('home.error_adding_language') + ' ' + e;
-      toastType = 'error';
-    }
-    loading = false;
-    showToast = true;
-    setTimeout(() => { showToast = false; }, 2500);
-  }
-
-  function openAddLanguageModal() {
-    showAddLanguageModal = true;
-    newLanguageCode = '';
-    newLanguageName = '';
-  }
-
-  function closeAddLanguageModal() {
-    showAddLanguageModal = false;
-    newLanguageCode = '';
-    newLanguageName = '';
-  }
-
-  function toggleLanguageSelection(languageCode) {
-    if (selectedLanguages.includes(languageCode)) {
-      selectedLanguages = selectedLanguages.filter(code => code !== languageCode);
-    } else if (selectedLanguages.length < maxVisibleLanguages) {
-      selectedLanguages = [...selectedLanguages, languageCode];
-    }
-  }
-
-  function isLanguageSelected(languageCode) {
-    return selectedLanguages.includes(languageCode);
-  }
 
   const importTranslationFile = async () => {
     try {
@@ -228,25 +171,23 @@
   
   async function importFoundFile(fileInfo) {
     loading = true;
-    console.log('Importazione file:', fileInfo);
+    console.log('Importazione file allarme:', fileInfo);
     
     try {
       // Usa il backend per leggere e importare il file direttamente
-      console.log('Chiamando import_translation_file_from_path con:', {
+      console.log('Chiamando import_alarm_file_from_path con:', {
         tableName: tableName,
-        languageCode: fileInfo.language_code,
         filePath: fileInfo.file_path
       });
       
-      const result = await invoke('import_translation_file_from_path', {
+      const result = await invoke('import_alarm_file_from_path', {
         tableName: tableName,
-        languageCode: fileInfo.language_code,
         filePath: fileInfo.file_path
       });
       
       console.log('Risultato importazione:', result);
       
-      toastMsg = result || `File ${fileInfo.file_name} importato con successo per ${fileInfo.language_name}!`;
+      toastMsg = result || `File ${fileInfo.file_name} importato con successo!`;
       toastType = 'success';
       showToast = true;
       setTimeout(() => { showToast = false; }, 3000);
@@ -266,9 +207,8 @@
   }
   
   function isFileAlreadyImported(fileInfo) {
-    return importedFiles.some(imported => 
-      imported.file_path === fileInfo.file_path && 
-      imported.language_code === fileInfo.language_code
+    return alarmsImportedFiles.some(imported => 
+      imported.file_path === fileInfo.file_path
     );
   }
   
@@ -277,21 +217,65 @@
     window.location.href = `/home/proj_view/table_view?table=${encodeURIComponent(tableName)}`;
   }
 
+  function openAlarmsDatabaseViewer() {
+    // Naviga alla pagina di visualizzazione del database degli allarmi
+    //window.location.href = `/home/proj_view/table_view?table=${encodeURIComponent(tableName + '_alarms')}`;
+    goto(`/home/proj_man/alarm_view/table_view?table=${encodeURIComponent(tableName + '_alarms')}`);
+  }
+
+  function openDeleteAlarmsConfirm() {
+    showDeleteAlarmsModal = true;
+  }
+
+  async function confirmDeleteAlarmsDb() {
+    showDeleteAlarmsModal = false;
+    loading = true;
+    
+    try {
+      const alarmsTableName = `${tableName}_alarms`;
+      await invoke('delete_alarms_database', { tableName: alarmsTableName });
+      
+      // Reset local data
+      alarms = [];
+      alarmsCount = 0;
+      alarmsImportedFiles = [];
+      
+      toastMsg = $_('alarms.database_deleted');
+      toastType = 'success';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 3000);
+      
+      // Ricarica i dati
+      await loadProjectData();
+    } catch (e) {
+      console.error('Errore eliminazione database allarmi:', e);
+      toastMsg = $_('alarms.error_deleting_database') + ' ' + e;
+      toastType = 'error';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 3000);
+    }
+    
+    loading = false;
+  }
+
+  function cancelDeleteAlarmsDb() {
+    showDeleteAlarmsModal = false;
+  }
+
   async function exportTranslations() {
     if (!tableName) return;
 
     loading = true;
     try {
-      // Get export preview first
-      const preview = await invoke('get_export_preview', { tableName: tableName });
-      
-      // Show confirmation modal with preview info
-      exportPreview = preview;
-      showExportModal = true;
-      
+      // Export alarms directly
+      const result = await invoke('export_alarms', { tableName: tableName });
+      toastMsg = result || $_('alarms.export_completed');
+      toastType = 'success';
+      showToast = true;
+      setTimeout(() => { showToast = false; }, 4000);
     } catch (e) {
-      console.error('Errore nella preview esportazione:', e);
-      toastMsg = $_('home.error_export_preview') + ' ' + e;
+      console.error('Errore esportazione allarmi:', e);
+      toastMsg = $_('home.error_exporting') + ' ' + e;
       toastType = 'error';
       showToast = true;
       setTimeout(() => { showToast = false; }, 4000);
@@ -304,13 +288,13 @@
     loading = true;
     
     try {
-      const result = await invoke('export_translations_per_language', { tableName: tableName });
-      toastMsg = result || 'Esportazione completata';
+      const result = await invoke('export_alarms', { tableName: tableName });
+      toastMsg = result || $_('alarms.export_completed');
       toastType = 'success';
       showToast = true;
       setTimeout(() => { showToast = false; }, 4000);
     } catch (e) {
-      console.error('Errore esportazione lingue:', e);
+      console.error('Errore esportazione allarmi:', e);
       toastMsg = $_('home.error_exporting') + ' ' + e;
       toastType = 'error';
       showToast = true;
@@ -331,13 +315,13 @@
       // Prima prova a cercare automaticamente nella directory del progetto
       if (projectInfo && projectInfo.path) {
         console.log($_('database.automatic_search_directory'), projectInfo.path);
-        foundTranslationFiles = await invoke('get_translation_files_in_directory', { 
+        foundAlarmFiles = await invoke('get_alarm_files_in_directory', { 
           directoryPath: projectInfo.path,
           tableName: tableName
         });
         
-        if (foundTranslationFiles.length > 0) {
-          toastMsg = $_('database.translation_files_found', { values: { count: foundTranslationFiles.length } });
+        if (foundAlarmFiles.length > 0) {
+          toastMsg = $_('database.alarm_files_found', { values: { count: foundAlarmFiles.length } });
           toastType = 'success';
           showToast = true;
           setTimeout(() => { showToast = false; }, 3000);
@@ -347,7 +331,7 @@
       }
       
       // Se non trova file automaticamente, chiede di selezionarli manualmente
-      toastMsg = $_('home.no_translation_files_found');
+      toastMsg = $_('home.no_alarm_files_found');
       toastType = 'info';
       showToast = true;
       setTimeout(() => { showToast = false; }, 2000);
@@ -358,8 +342,8 @@
         directory: false,
         multiple: true,
         filters: [{
-          name: 'File di traduzione',
-          extensions: ['xml', 'ita', 'eng', 'fra', 'fre', 'deu', 'ger', 'esp', 'spa']
+          name: 'File di allarmi',
+          extensions: ['hmialr']
         }]
       });
       
@@ -371,53 +355,25 @@
           const fileName = filePath.split(/[/\\]/).pop() || '';
           const fileNameLower = fileName.toLowerCase();
           
-          // Mappa delle estensioni alle lingue
-          let languageName = 'Sconosciuto';
-          let languageCode = 'unknown';
-          
-          if (fileNameLower.endsWith('.ita')) {
-            languageName = 'Italiano';
-            languageCode = 'it';
-          } else if (fileNameLower.endsWith('.eng')) {
-            languageName = 'English';
-            languageCode = 'en';
-          } else if (fileNameLower.endsWith('.fra') || fileNameLower.endsWith('.fre')) {
-            languageName = 'Français';
-            languageCode = 'fr';
-          } else if (fileNameLower.endsWith('.deu') || fileNameLower.endsWith('.ger')) {
-            languageName = 'Deutsch';
-            languageCode = 'de';
-          } else if (fileNameLower.endsWith('.esp') || fileNameLower.endsWith('.spa')) {
-            languageName = 'Español';
-            languageCode = 'es';
-          } else if (fileNameLower.endsWith('.xml')) {
-            // Per i file XML, chiediamo la lingua
-            const langCode = prompt(`Inserisci il codice lingua per il file ${fileName} (es: en, it, fr):`);
-            if (langCode) {
-              languageCode = langCode.toLowerCase();
-              languageName = getLanguageNameFromCode(languageCode);
-            }
-          }
-          
-          if (languageCode !== 'unknown') {
+          // Accetta solo file .hmialr
+          if (fileNameLower.endsWith('.hmialr')) {
             manualFiles.push({
               file_name: fileName,
               file_path: filePath,
-              language_name: languageName,
-              language_code: languageCode
+              file_type: 'hmialr'
             });
           }
         }
         
-        foundTranslationFiles = manualFiles;
+        foundAlarmFiles = manualFiles;
         
-        if (foundTranslationFiles.length > 0) {
-          toastMsg = `Selezionati ${foundTranslationFiles.length} file di traduzione!`;
+        if (foundAlarmFiles.length > 0) {
+          toastMsg = `Selezionati ${foundAlarmFiles.length} file di allarmi!`;
           toastType = 'success';
           showToast = true;
           setTimeout(() => { showToast = false; }, 3000);
         } else {
-          toastMsg = $_('home.no_valid_translation_files');
+          toastMsg = $_('home.no_valid_alarm_files');
           toastType = 'warning';
           showToast = true;
           setTimeout(() => { showToast = false; }, 3000);
@@ -601,53 +557,7 @@
     selectedFixes[index].selected = !selectedFixes[index].selected;
   }
 
-  function confirmDeleteLanguage(languageCode, languageName) {
-    languageToDelete = { code: languageCode, name: languageName };
-    showDeleteLanguageModal = true;
-  }
 
-  async function deleteLanguage() {
-    if (!languageToDelete) return;
-
-    loading = true;
-    try {
-      console.log('Tentativo eliminazione lingua:', {
-        projectName: tableName,
-        languageCode: languageToDelete.code,
-        languageName: languageToDelete.name
-      });
-      
-      const result = await invoke('remove_language_from_project', { 
-        projectName: tableName, 
-        languageCode: languageToDelete.code 
-      });
-      
-      toastMsg = result || `Lingua ${languageToDelete.name} eliminata con successo`;
-      toastType = 'success';
-      showToast = true;
-      setTimeout(() => { showToast = false; }, 3000);
-      
-      // Ricarica i dati del progetto
-      await loadProjectData();
-      
-      // Chiudi il modal
-      showDeleteLanguageModal = false;
-      languageToDelete = null;
-    } catch (e) {
-      console.error('Errore eliminazione lingua:', e);
-      console.log('Lingue attualmente caricate:', languages);
-      toastMsg = $_('home.error_deleting_language') + ' ' + e;
-      toastType = 'error';
-      showToast = true;
-      setTimeout(() => { showToast = false; }, 3000);
-    }
-    loading = false;
-  }
-
-  function cancelDeleteLanguage() {
-    showDeleteLanguageModal = false;
-    languageToDelete = null;
-  }
 </script>
 
 <div class="min-h-screen flex flex-col" style="background: linear-gradient(135deg, #c9ffe7 0%, #e9e9ff 70%, #dcecff 100%);">
@@ -669,7 +579,7 @@
       
       <div class="text-center flex-1">
         <h1 class="text-2xl font-semibold text-gray-900 mb-1">{$_('project.title')} {tableName}</h1>
-        <p class="text-gray-700 text-sm">{$_('project.languages_subtitle')}</p>
+        <p class="text-gray-700 text-sm">{$_('project.alarms_subtitle')}</p>
       </div>
       
       <div class="flex gap-2 items-center">
@@ -689,7 +599,7 @@
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v14m7-7H5"></path>
           </svg>
-          {$_('project.export_languages')}
+          {$_('project.export_alarms')}
         </button>
         <button class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2" on:click={findProjectKeys}>
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -697,11 +607,11 @@
           </svg>
           {$_('project.find_keys')}
         </button>
-        <button class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2" on:click={openAddLanguageModal}>
+        <button class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2" on:click={checkAccentedCharacters} disabled={loading}>
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.771-.833-2.693-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
           </svg>
-          {$_('project.add_language')}
+          {$_('project.character_check')}
         </button>
       </div>
     </div>
@@ -712,7 +622,7 @@
     <div class="w-full h-full overflow-y-auto pb-20" style="scrollbar-width: thin;">
       
       <!-- Sezione file trovati nel progetto -->
-      {#if foundTranslationFiles.length > 0}
+      {#if foundAlarmFiles.length > 0}
         <div class="mb-6">
           <h3 class="text-lg font-semibold text-gray-800 mb-3 flex items-center justify-center gap-2">
             <svg class="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -726,7 +636,7 @@
           <!-- Linea separatrice sopra -->
           <div class="w-full h-px bg-gradient-to-r from-transparent via-black to-transparent mb-4"></div>
           <div class="flex flex-wrap justify-center gap-4">
-            {#each foundTranslationFiles as fileInfo}
+            {#each foundAlarmFiles as fileInfo}
               {@const alreadyImported = isFileAlreadyImported(fileInfo)}
               <div class="backdrop-blur-sm rounded-lg border p-2 text-center shadow-lg {alreadyImported ? 'bg-green-100/90 border-green-300/50' : 'bg-yellow-100/90 border-yellow-300/50'}"
                 style="width: {cardWidth}px; min-width: {cardWidth}px; max-width: {cardWidth}px; height: {cardHeight}px;">
@@ -788,7 +698,7 @@
       {/if}
       
       <!-- Sezioni principali del progetto in griglia responsive -->
-      {#if recordsCount > 0 || languages.length > 0 || projectKeys.length > 0}
+      {#if recordsCount > 0 || alarmsImportedFiles.length > 0 || projectKeys.length > 0}
         <div class="mb-6">
           <!-- Linea separatrice sopra -->
           <div class="w-full h-px bg-gradient-to-r from-transparent via-black to-transparent mb-6"></div>
@@ -849,62 +759,76 @@
             {/if}
             
             <!-- Separatore 1: orizzontale su mobile, verticale su desktop -->
-            {#if recordsCount > 0 && (languages.length > 0 || projectKeys.length > 0)}
+            {#if recordsCount > 0 && (alarmsImportedFiles.length > 0 || projectKeys.length > 0)}
               <!-- Linea orizzontale su schermi piccoli -->
               <div class="xl:hidden w-full h-px bg-gradient-to-r from-transparent via-black to-transparent my-4"></div>
               <!-- Linea verticale su schermi grandi -->
               <div class="hidden xl:block w-px h-64 bg-gradient-to-b from-transparent via-black to-transparent"></div>
             {/if}
             
-            <!-- Sezione Lingue configurate -->
-            {#if languages.length > 0}
+            <!-- Sezione Allarmi importati -->
+            {#if alarmsImportedFiles.length > 0}
               <div class="w-full max-w-sm">
                 <h3 class="text-lg font-semibold text-gray-800 mb-3 flex items-center justify-center gap-2">
-                  <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
+                  <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.771-.833-2.693-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
                   </svg>
-                  {$_('project.languages_section')}
+                  Allarmi importati
                 </h3>
                 <p class="text-sm text-gray-600 text-center mb-4">
-                  {$_('project.languages_description', { values: { count: languages.length, plural: languages.length === 1 ? $_('project.language_configured') : $_('project.languages_configured') } })}
-                </p>               
+                  {alarmsImportedFiles.length} file .hmialr importato{alarmsImportedFiles.length === 1 ? '' : 'i'}
+                </p>
                 
-                <!-- Container scorribile: mostra 3 lingue alla volta -->
-                <div class="overflow-y-auto" style="scrollbar-width: thin; height: 192px; max-height: 192px;">
-                  <div class="flex flex-col gap-2 pr-1">
-                    {#each languages as language}
-                      <div class="bg-green-100/90 backdrop-blur-sm rounded-lg border border-green-300/50 p-2 text-center shadow-lg flex items-center gap-3 group hover:bg-green-200/90 transition-colors" style="min-height: 56px;">
-                        <div class="w-8 h-8 bg-green-200 rounded flex items-center justify-center flex-shrink-0">
-                          <svg class="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5h12M9 3v2m1.048 9.5A18.022 18.022 0 016.412 9m6.088 9h7M11 21l5-10 5 10M12.751 5C11.783 10.77 8.07 15.61 3 18.129"></path>
-                          </svg>
-                        </div>
-                        <div class="flex-1 min-w-0">
-                          <h4 class="text-sm font-semibold text-green-800 truncate">{language.name}</h4>
-                          <p class="text-xs text-green-600">({language.code})</p>
-                        </div>
-                        <!-- Pulsante Elimina - visibile al hover -->
-                        <div class="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            on:click={() => confirmDeleteLanguage(language.code, language.name)}
-                            disabled={loading}
-                            class="bg-red-500 hover:bg-red-600 disabled:bg-gray-400 text-white p-1 rounded text-xs flex items-center gap-1 transition-colors"
-                            title="Elimina lingua {language.name}">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                            </svg>
-                            Elimina
-                          </button>
-                        </div>
+                <div class="flex justify-center">
+                  <div class="bg-orange-100/90 backdrop-blur-sm rounded-lg border border-orange-300/50 p-2 text-center shadow-lg"
+                    style="width: {cardWidth}px; min-width: {cardWidth}px; max-width: {cardWidth}px; height: {cardHeight}px;">
+                    
+                    <div class="rounded-lg w-full bg-orange-200 mb-2 flex items-center justify-center relative"
+                      style="height: {imageHeight}px; min-height: {imageHeight}px; max-height: {imageHeight}px;">
+                      
+                      <!-- Icona allarme -->
+                      <svg class="w-12 h-12 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.771-.833-2.693-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
+                      </svg>
+                      
+                      <!-- Badge con numero allarmi -->
+                      <div class="absolute top-1 right-1 bg-orange-500 text-white text-xs px-1 py-0.5 rounded">
+                        {alarmsCount} allarmi
                       </div>
-                    {/each}
+                    </div>
+                    
+                    <h2 class="text-base font-semibold text-orange-800 mb-1 truncate">Database Allarmi</h2>
+                    <p class="text-xs text-orange-600 mb-2 truncate">Visualizza tutti gli allarmi</p>
+                    
+                    <div class="flex justify-center gap-1">
+                      <button 
+                        on:click={openAlarmsDatabaseViewer}
+                        disabled={loading}
+                        class="bg-orange-500 hover:bg-orange-700 disabled:bg-gray-400 text-white font-bold py-1 px-2 rounded text-xs flex items-center gap-1"
+                        title="Visualizza database allarmi">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                        </svg>
+                        {$_('project.view_db')}
+                      </button>
+                      <button 
+                        on:click={openDeleteAlarmsConfirm}
+                        disabled={loading}
+                        class="bg-red-500 hover:bg-red-700 disabled:bg-gray-400 text-white font-bold py-1 px-2 rounded text-xs flex items-center"
+                        title="{$_('alarms.delete_database')}">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                        </svg>
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
             {/if}
             
             <!-- Separatore 2: orizzontale su mobile, verticale su desktop -->
-            {#if languages.length > 0 && projectKeys.length > 0}
+            {#if alarmsImportedFiles.length > 0 && projectKeys.length > 0}
               <!-- Linea orizzontale su schermi piccoli -->
               <div class="xl:hidden w-full h-px bg-gradient-to-r from-transparent via-black to-transparent my-4"></div>
               <!-- Linea verticale su schermi grandi -->
@@ -965,62 +889,13 @@
         </div>
       {/if}
 
-      {#if languages.length === 0 && foundTranslationFiles.length === 0 && projectKeys.length === 0}
+      {#if alarmsImportedFiles.length === 0 && foundAlarmFiles.length === 0 && projectKeys.length === 0}
         <div class="text-center text-gray-500 py-8">
-          <p class="mb-4">{$_('database.no_languages_configured')}</p>
-          <button class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded" on:click={openAddLanguageModal}>
-            {$_('database.add_first_language')}
-          </button>
+          <p class="mb-4">No alarm files imported yet</p>
         </div>
       {/if}
     </div>
   </main>
-
-  <!-- ADD LANGUAGE MODAL -->
-  {#if showAddLanguageModal}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div class="bg-white rounded-lg shadow-lg p-6 w-full max-w-sm">
-        <h2 class="text-lg font-semibold mb-4">{$_('project.add_language_modal_title')}</h2>
-        <div class="mb-4">
-          <label for="languageCode" class="block text-sm font-medium text-gray-700 mb-2">{$_('project.add_language_code')}</label>
-          <input 
-            id="languageCode"
-            type="text" 
-            bind:value={newLanguageCode} 
-            placeholder="{$_('project.add_language_code_placeholder')}" 
-            class="w-full border rounded px-3 py-2 text-sm"
-            maxlength="5"
-          />
-        </div>
-        <div class="mb-4">
-          <label for="languageName" class="block text-sm font-medium text-gray-700 mb-2">{$_('project.add_language_name')}</label>
-          <input 
-            id="languageName"
-            type="text" 
-            bind:value={newLanguageName} 
-            placeholder="{$_('project.add_language_name_placeholder')}" 
-            class="w-full border rounded px-3 py-2 text-sm"
-          />
-        </div>
-        <div class="flex justify-end gap-3">
-          <button 
-            class="bg-gray-300 hover:bg-gray-400 text-gray-800 font-bold py-2 px-4 rounded" 
-            on:click={closeAddLanguageModal}
-            disabled={loading}
-          >
-            {$_('project.add_language_cancel')}
-          </button>
-          <button 
-            class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded" 
-            on:click={addLanguage}
-            disabled={loading}
-          >
-            {loading ? $_('project.adding') : $_('project.add_language_confirm')}
-          </button>
-        </div>
-      </div>
-    </div>
-  {/if}
 
   <!-- KEYS MODAL -->
   {#if showKeysModal}
@@ -1256,7 +1131,7 @@
   <!-- Modal di conferma esportazione -->
   {#if showExportModal && exportPreview}
     <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div class="relative bg-white rounded-lg shadow-xl max-w-2xl w-full mx-4">
+      <div class="relative bg-white rounded-lg  max-w-2xl w-full mx-4">
         <div class="p-6">
           <div class="flex items-center mb-4">
             <svg class="w-6 h-6 text-blue-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1269,7 +1144,7 @@
             <p class="text-gray-600 mb-4">
               <strong>{$_('database.export_project_label')}</strong> {exportPreview.projectName}<br>
               <strong>{$_('database.export_path_label')}</strong> {exportPreview.projectPath}<br>
-              <strong>{$_('database.export_languages_label')}</strong> {exportPreview.languageCount}
+              <strong>{$_('database.export_alarms_label')}</strong> {exportPreview.alarmCount}
             </p>
 
             <div class="mb-4">
@@ -1341,10 +1216,56 @@
     </div>
   {/if}
 
+  <!-- Modal conferma eliminazione database allarmi -->
+  {#if showDeleteAlarmsModal}
+    <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+      <div class="relative bg-white rounded-lg max-w-md w-full mx-4">
+        <div class="p-6">
+          <div class="flex items-center mb-4">
+            <svg class="w-6 h-6 text-red-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+            </svg>
+            <h3 class="text-lg font-semibold text-gray-900">{$_('alarms.delete_database_title')}</h3>
+          </div>
+          
+          <div class="mb-6">
+            <p class="text-gray-600 mb-4">
+              {$_('alarms.delete_database_confirm')}
+            </p>
+            <div class="bg-red-50 border border-red-200 rounded-lg p-3">
+              <p class="text-red-700 text-sm font-medium">
+                <strong>{$_('alarms.warning')}:</strong> {$_('alarms.delete_database_warning')}
+              </p>
+              <p class="text-red-600 text-sm mt-2">
+                {$_('alarms.alarms_to_delete')}: <strong>{alarmsCount}</strong>
+              </p>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-3">
+            <button
+              on:click={cancelDeleteAlarmsDb}
+              class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
+              {$_('database.export_cancel')}
+            </button>
+            <button
+              on:click={confirmDeleteAlarmsDb}
+              class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+              </svg>
+              {$_('alarms.delete_database_button')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- Modal controllo caratteri accentati -->
   {#if showAccentedCharsModal}
     <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div class="relative bg-white rounded-lg shadow-xl max-w-6xl w-full mx-4 max-h-[90vh] overflow-hidden">
+      <div class="relative bg-white rounded-lg  max-w-6xl w-full mx-4 max-h-[90vh] overflow-hidden">
         <div class="p-6">
           <div class="flex items-center justify-between mb-4">
             <div class="flex items-center">
@@ -1446,44 +1367,6 @@
               </button>
             </div>
           {/if}
-        </div>
-      </div>
-    </div>
-  {/if}
-
-  <!-- Modal di conferma eliminazione lingua -->
-  {#if showDeleteLanguageModal && languageToDelete}
-    <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
-        <div class="p-6">
-          <div class="flex items-center mb-4">
-            <svg class="w-6 h-6 text-red-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 15.5c-.77.833.192 2.5 1.732 2.5z"></path>
-            </svg>
-            <h3 class="text-lg font-semibold text-gray-900">{$_('project.delete_language_modal_title')}</h3>
-          </div>
-          <p class="text-gray-600 mb-6">
-            {@html $_('project.delete_language_modal_message', { values: { name: languageToDelete.name, code: languageToDelete.code } })}
-            <br><br>
-            <span class="text-red-600 font-medium">{$_('project.delete_language_modal_warning')}</span>
-          </p>
-          <div class="flex justify-end gap-3">
-            <button
-              on:click={cancelDeleteLanguage}
-              disabled={loading}
-              class="bg-gray-500 hover:bg-gray-600 disabled:bg-gray-400 text-white font-bold py-2 px-4 rounded">
-              {$_('project.delete_language_modal_cancel')}
-            </button>
-            <button
-              on:click={deleteLanguage}
-              disabled={loading}
-              class="bg-red-500 hover:bg-red-600 disabled:bg-gray-400 text-white font-bold py-2 px-4 rounded flex items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-              </svg>
-              {loading ? $_('project.delete_language_modal_deleting') : $_('project.delete_language_modal_confirm')}
-            </button>
-          </div>
         </div>
       </div>
     </div>

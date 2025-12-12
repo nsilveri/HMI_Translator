@@ -677,7 +677,7 @@
       </div>
     {:else}
       <!-- Barra di ricerca e statistiche fissa -->
-      <div class="fixed top-24 left-5 right-5 z-20 bg-white/95 backdrop-blur-md rounded-lg border border-gray-300/50 shadow-xl p-4">
+      <div class="fixed top-24 left-5 right-5 z-20 bg-white/95 backdrop-blur-md rounded-lg border border-gray-300/50  p-4">
           <!-- Barra di ricerca con statistiche integrate -->
           <div class="flex items-center gap-4 mb-1">
             <!-- Campo di ricerca -->
@@ -1059,7 +1059,7 @@
   <!-- Modal di conferma -->
   {#if showConfirmModal}
     <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+      <div class="relative bg-white rounded-lg  max-w-md w-full mx-4">
         <div class="p-6">
           <div class="flex items-center mb-4">
             {#if confirmModalType === 'error'}
@@ -1109,7 +1109,7 @@
   <!-- Modal di conferma eliminazione -->
   {#if showDeleteModal}
     <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div class="relative bg-white rounded-lg shadow-xl max-w-md w-full mx-4">
+      <div class="relative bg-white rounded-lg  max-w-md w-full mx-4">
         <div class="p-6">
           <div class="flex items-center mb-4">
             <svg class="w-6 h-6 text-red-500 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
